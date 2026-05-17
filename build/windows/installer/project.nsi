@@ -76,7 +76,18 @@ InstallDir "$PROGRAMFILES64\${INFO_PRODUCTNAME}" # Default installing folder ($P
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
-   !insertmacro wails.checkArchitecture
+    !insertmacro wails.checkArchitecture
+
+    ; Detect and silently uninstall previous version
+    SetRegView 64
+    ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
+    ReadRegStr $1 HKLM "${UNINST_KEY}" "DisplayVersion"
+    ${If} $0 != ""
+    ${AndIf} $1 != "${INFO_PRODUCTVERSION}"
+        CopyFiles /SILENT "$0" "$TEMP\vfoxG_uninst.exe"
+        ExecWait '"$TEMP\vfoxG_uninst.exe" /S _?=$INSTDIR'
+        Delete "$TEMP\vfoxG_uninst.exe"
+    ${EndIf}
 FunctionEnd
 
 Section
