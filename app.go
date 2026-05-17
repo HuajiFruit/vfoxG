@@ -1165,19 +1165,7 @@ func (a *App) getVfoxHome() string {
 	if err == nil {
 		return filepath.Join(home, ".vfox")
 	}
-	// UserHomeDir failed (extremely rare on Windows). Try fallbacks.
-	if home = os.Getenv("USERPROFILE"); home != "" {
-		return filepath.Join(home, ".vfox")
-	}
-	if home = os.Getenv("HOMEDRIVE") + os.Getenv("HOMEPATH"); home != "" {
-		return filepath.Join(home, ".vfox")
-	}
-	// Last resort: use the current working directory so callers
-	// don't get an empty string that would resolve to "sdks" etc.
-	if wd, e := os.Getwd(); e == nil {
-		return filepath.Join(wd, ".vfox")
-	}
-	return filepath.Join(".vfox")
+	return ""
 }
 
 // runElevatedScriptHelper creates a temp script and runs it with UAC elevation, waiting for completion.
