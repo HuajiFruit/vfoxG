@@ -9,5 +9,9 @@
   "author": {
     "name": "HuajiFruit",
     "email": "jimdeng2019@outlook.com"
+  },
+  "info": {
+    "productName": "vfoxG",
+    "productVersion": "0.1.0"
   }
 }

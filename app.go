@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -105,26 +106,48 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
+		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] StdoutPipe failed: %v", err))
 		return err
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
+		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] StderrPipe failed: %v", err))
 		return err
 	}
 
 	if err := cmd.Start(); err != nil {
+		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] cmd.Start failed: %v", err))
 		return err
+	}
+
+	// 自定义拆分函数，遇到 \r 或 \n 都切分，防止进度条阻塞
+	splitFunc := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		if atEOF && len(data) == 0 {
+			return 0, nil, nil
+		}
+		if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+			return i + 1, data[0:i], nil
+		}
+		if atEOF {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
 	}
 
 	// 实时读取标准输出
 	go func() {
 		scanner := bufio.NewScanner(stdoutPipe)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB 缓冲区
+		scanner.Split(splitFunc)
 		for scanner.Scan() {
 			if a.ctx == nil {
 				continue
 			}
 			line := scanner.Text()
+			if line == "" {
+				continue
+			}
 			cleanLine := ansiRegex.ReplaceAllString(line, "")
 			runtime.EventsEmit(a.ctx, "vfox-log", cleanLine)
 		}
@@ -136,11 +159,16 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 	// 实时读取标准错误
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
+		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB 缓冲区
+		scanner.Split(splitFunc)
 		for scanner.Scan() {
 			if a.ctx == nil {
 				continue
 			}
 			line := scanner.Text()
+			if line == "" {
+				continue
+			}
 			cleanLine := ansiRegex.ReplaceAllString(line, "")
 			runtime.EventsEmit(a.ctx, "vfox-log", "[ERROR] "+cleanLine)
 		}

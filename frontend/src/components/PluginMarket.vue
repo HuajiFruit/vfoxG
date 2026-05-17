@@ -1,10 +1,10 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted } from 'vue';
-import { GetAvailablePlugins, RefreshAvailablePlugins, RunVfoxWithProgress, SearchVersions, GetSdkDetail, InstallVersion, RemovePlugin, GetAddedPlugins, ScanSystemSdks, GetCachedSystemSdks, DetectSdkPathVersion, AddNonVfoxSdk, UseCustomSdk, HijackSystemPath, RestoreSystemPath } from '../../wailsjs/go/main/App';
+import { GetAvailablePlugins, RefreshAvailablePlugins, RunVfoxWithProgress, SearchVersions, GetSdkDetail, InstallVersion, RemovePlugin, GetAddedPlugins, ScanSystemSdks, GetCachedSystemSdks, DetectSdkPathVersion, AddNonVfoxSdk, UseCustomSdk, HijackSystemPath, RestoreSystemPath, GetNonVfoxSdks } from '../../wailsjs/go/main/App';
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
 import PluginIcon from './PluginIcon.vue';
-import ConfirmModal from './ConfirmModal.vue';
+import RemovePluginModal from './RemovePluginModal.vue';
 import { t } from '../i18n';
 import { getPluginDescription } from '../pluginDescriptions';
 
@@ -165,12 +165,24 @@ const addPlugin = async (name: string) => {
 };
 
 const confirmRemove = ref<string | null>(null);
+const confirmRemoveCustomSdks = ref<Array<{ path: string; version: string }>>([]);
 
-const requestRemovePlugin = (name: string) => {
+const requestRemovePlugin = async (name: string) => {
+  // Fetch custom SDKs for this plugin
+  try {
+    const nonVfoxMap = await GetNonVfoxSdks();
+    const sdks = nonVfoxMap[name] || [];
+    confirmRemoveCustomSdks.value = sdks.map((s: any) => ({
+      path: s.path || s.Path || '',
+      version: s.versions?.[0]?.version || s.version || s.Version || 'unknown',
+    }));
+  } catch {
+    confirmRemoveCustomSdks.value = [];
+  }
   confirmRemove.value = name;
 };
 
-const executeRemovePlugin = async () => {
+const executeRemovePlugin = async (chosenPath: string | null) => {
   if (!confirmRemove.value) return;
   const name = confirmRemove.value;
   confirmRemove.value = null;
@@ -178,10 +190,16 @@ const executeRemovePlugin = async () => {
   emit('start-task', `Removing plugin: ${name}`);
   removingPlugin.value = name;
   try {
-    await RestoreSystemPath(name);
+    if (chosenPath) {
+      // User chose to keep a specific SDK: restore its path to system PATH
+      await RestoreSystemPath(name);
+    } else {
+      // Clean removal: don't restore anything
+      // Just proceed without calling RestoreSystemPath
+    }
     await RemovePlugin(name);
     await fetchPlugins();
-    ScanSystemSdks(); // Update system SDK cache in background // This updates the global list and selectedPlugin
+    ScanSystemSdks();
   } catch (err) {
     console.error(err);
   } finally {
@@ -358,12 +376,10 @@ onMounted(() => {
     </Transition>
 
     <Teleport to="body">
-      <ConfirmModal 
+      <RemovePluginModal 
         v-if="confirmRemove"
-        :title="t('sdk.remove_plugin')"
-        :message="`${t('sdk.confirm.remove_plugin')} '${confirmRemove}'?`"
-        :danger="true"
-        :confirmText="t('sdk.remove')"
+        :pluginName="confirmRemove"
+        :customSdks="confirmRemoveCustomSdks"
         @confirm="executeRemovePlugin"
         @cancel="confirmRemove = null"
       />

@@ -88,6 +88,13 @@ Section
 
     !insertmacro wails.files
 
+    ; Include the core directory (contains vfox.exe)
+    SetOutPath "$INSTDIR\core"
+    File /r "D:\Desktop\files\vfoxG-main\core\*.*"
+    
+    ; Reset the out path
+    SetOutPath $INSTDIR
+
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 

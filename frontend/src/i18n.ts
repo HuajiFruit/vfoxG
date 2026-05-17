@@ -76,6 +76,9 @@ const en: TranslationDict = {
   'sdk.confirm.remove_custom': 'Are you sure you want to remove the custom SDK',
   'sdk.confirm.note': 'Note: This only removes the reference from Vfox.',
   'sdk.remove_reference': 'Remove Reference',
+  'sdk.remove_plugin.choose_sdk': 'This plugin has custom SDK paths. Choose which one to keep as the system SDK, or remove everything:',
+  'sdk.remove_plugin.clean': 'Clean removal (remove all)',
+  'sdk.remove_plugin.clean_desc': 'Remove the plugin and all SDK references. No environment variables will remain.',
 
   // PluginMarket
   'market.title': 'Plugin Market',
@@ -147,6 +150,9 @@ const zh: TranslationDict = {
   'sdk.confirm.remove_custom': '确定要移除此自定义 SDK 吗：',
   'sdk.confirm.note': '注意：这仅仅是从 Vfox 中移除引用，并不会删除磁盘上的物理文件。',
   'sdk.remove_reference': '移除引用',
+  'sdk.remove_plugin.choose_sdk': '该插件关联了自定义 SDK 路径。请选择保留哪个作为系统 SDK，或全部清除：',
+  'sdk.remove_plugin.clean': '彻底清除（不保留任何环境）',
+  'sdk.remove_plugin.clean_desc': '移除插件并清除所有 SDK 引用和环境变量，不留任何残留。',
 
   // PluginMarket
   'market.title': '插件市场',

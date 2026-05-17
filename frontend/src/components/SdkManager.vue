@@ -5,6 +5,7 @@ import { EventsOn, EventsOff, ClipboardSetText } from '../../wailsjs/runtime/run
 import { main } from '../../wailsjs/go/models';
 import PluginIcon from './PluginIcon.vue';
 import ConfirmModal from './ConfirmModal.vue';
+import RemovePluginModal from './RemovePluginModal.vue';
 import { t } from '../i18n';
 
 const sdks = ref<main.SdkInfo[]>([]);
@@ -386,8 +387,19 @@ const requestUninstall = (name: string, version: string) => {
   confirmAction.value = { type: 'uninstallVersion', name, version };
 };
 
-const requestRemovePlugin = (name: string) => {
-  confirmAction.value = { type: 'removePlugin', name };
+const requestRemovePlugin = async (name: string) => {
+  // Fetch custom SDKs for this plugin to show the choice modal
+  try {
+    const nonVfoxMap = await GetNonVfoxSdks();
+    const sdks = nonVfoxMap[name] || [];
+    removePluginCustomSdks.value = sdks.map((s: any) => ({
+      path: s.path || s.Path || '',
+      version: s.versions?.[0]?.version || s.version || s.Version || 'unknown',
+    }));
+  } catch {
+    removePluginCustomSdks.value = [];
+  }
+  removePluginName.value = name;
 };
 
 const requestRemoveCustomPath = (name: string, path: string) => {
@@ -412,27 +424,39 @@ const executeConfirm = async () => {
       console.error(err);
       errorMsg.value = `Failed to uninstall ${name}@${version}.`;
     }
-  } else if (type === 'removePlugin') {
-    emit('start-task', `Removing plugin: ${name}`);
-    removingPlugin.value = name;
-    try {
-      await handleUnuse(name);
-      await RestoreSystemPath(name);
-      await RemovePlugin(name);
-      await fetchAllSdks();
-      closeDetail();
-    } catch (err) {
-      console.error(err);
-      errorMsg.value = `Failed to remove plugin ${name}.`;
-    } finally {
-      removingPlugin.value = null;
-    }
   } else if (type === 'removeCustomSdk' && path) {
     const isCurrent = activeCustomSdk.value === path;
     if (isCurrent) {
       await handleUnuse(name);
     }
     await handleRemoveCustomPath(name, path);
+  }
+};
+
+// RemovePluginModal state
+const removePluginName = ref<string | null>(null);
+const removePluginCustomSdks = ref<Array<{ path: string; version: string }>>([]);
+
+const executeRemovePlugin = async (chosenPath: string | null) => {
+  const name = removePluginName.value;
+  removePluginName.value = null;
+  if (!name) return;
+
+  emit('start-task', `Removing plugin: ${name}`);
+  removingPlugin.value = name;
+  try {
+    await handleUnuse(name);
+    if (chosenPath) {
+      await RestoreSystemPath(name);
+    }
+    await RemovePlugin(name);
+    await fetchAllSdks();
+    closeDetail();
+  } catch (err) {
+    console.error(err);
+    errorMsg.value = `Failed to remove plugin ${name}.`;
+  } finally {
+    removingPlugin.value = null;
   }
 };
 
@@ -619,8 +643,8 @@ const toggleExpand = (id: string) => {
               <h2>{{ t('sdk.nonevfox.title') }}</h2>
               <div class="version-card">
                 <div class="version-card-header">
-                  <div class="flex-center flex-gap-12" style="min-width: 0; flex: 1;">
-                    <h3 class="version-title" :style="{ display: 'flex', alignItems: expandedVersions['sys-' + selectedSdk.path] ? 'flex-start' : 'center', flexWrap: expandedVersions['sys-' + selectedSdk.path] ? 'wrap' : 'nowrap', gap: '8px', minWidth: 0, flex: 1 }">
+                  <div class="flex-align-center flex-gap-12" style="min-width: 0; flex: 1;">
+                    <h3 class="version-title" :style="{ display: 'flex', alignItems: expandedVersions['sys-' + selectedSdk.path] ? 'flex-start' : 'center', flexWrap: expandedVersions['sys-' + selectedSdk.path] ? 'wrap' : 'nowrap', gap: '8px', minWidth: 0, flex: '0 1 auto' }">
                       <span :style="{ wordBreak: 'break-all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: expandedVersions['sys-' + selectedSdk.path] ? 'normal' : 'nowrap' }">
                         {{ selectedSdk.versions?.[0]?.version || 'unknown' }}
                       </span>
@@ -660,8 +684,8 @@ const toggleExpand = (id: string) => {
               <div v-else-if="unifiedVersions.length" class="versions-grid">
                 <div v-for="ver in unifiedVersions" :key="ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version" class="version-card" :class="{ 'is-current': ver.isCurrent }">
                   <div class="version-card-header">
-                    <div class="flex-center flex-gap-12" style="min-width: 0; flex: 1;">
-                      <h3 class="version-title" :style="{ display: 'flex', alignItems: expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? 'flex-start' : 'center', flexWrap: expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? 'wrap' : 'nowrap', gap: '8px', minWidth: 0, flex: 1 }">
+                    <div class="flex-align-center flex-gap-12" style="min-width: 0; flex: 1;">
+                      <h3 class="version-title" :style="{ display: 'flex', alignItems: expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? 'flex-start' : 'center', flexWrap: expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? 'wrap' : 'nowrap', gap: '8px', minWidth: 0, flex: '0 1 auto' }">
                         <span :style="{ wordBreak: 'break-all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? 'normal' : 'nowrap' }">
                           {{ ver.version }}
                         </span>
@@ -745,16 +769,21 @@ const toggleExpand = (id: string) => {
     <Teleport to="body">
       <ConfirmModal 
         v-if="confirmAction.type"
-        :title="confirmAction.type === 'removePlugin' ? t('sdk.remove_plugin') : confirmAction.type === 'uninstallVersion' ? t('sdk.uninstall') : t('sdk.remove')"
-        :message="confirmAction.type === 'removePlugin' 
-          ? `${t('sdk.confirm.remove_plugin')} '${confirmAction.name}'?` 
-          : confirmAction.type === 'uninstallVersion'
+        :title="confirmAction.type === 'uninstallVersion' ? t('sdk.uninstall') : t('sdk.remove')"
+        :message="confirmAction.type === 'uninstallVersion'
           ? `${t('sdk.confirm.uninstall_version')} ${confirmAction.version} of ${confirmAction.name}?`
           : `${t('sdk.confirm.note')} ${t('sdk.confirm.remove_custom')}?`"
         :danger="true"
-        :confirmText="confirmAction.type === 'removePlugin' ? t('sdk.remove') : confirmAction.type === 'uninstallVersion' ? t('sdk.uninstall') : t('sdk.remove_reference')"
+        :confirmText="confirmAction.type === 'uninstallVersion' ? t('sdk.uninstall') : t('sdk.remove_reference')"
         @confirm="executeConfirm"
         @cancel="confirmAction.type = null"
+      />
+      <RemovePluginModal
+        v-if="removePluginName"
+        :pluginName="removePluginName"
+        :customSdks="removePluginCustomSdks"
+        @confirm="executeRemovePlugin"
+        @cancel="removePluginName = null"
       />
     </Teleport>
   </div>
