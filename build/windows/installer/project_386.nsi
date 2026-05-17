@@ -56,8 +56,11 @@ ManifestDPIAware true
 !define MUI_FINISHPAGE_NOAUTOCLOSE # Wait on the INSTFILES page so the user can take a look into the details of the installation steps
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
+Var IsUpgrade
+
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipDirIfUpgrade
 !insertmacro MUI_PAGE_DIRECTORY # In which folder install page.
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
@@ -75,17 +78,42 @@ OutFile "..\..\bin\${INFO_PROJECTNAME}-386-installer.exe" # Name of the installe
 InstallDir "$PROGRAMFILES\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
 ShowInstDetails show # This will always show the installation details.
 
+Function SkipDirIfUpgrade
+    ${If} $IsUpgrade == "1"
+        Abort ; Skip directory page
+    ${EndIf}
+FunctionEnd
+
 Function .onInit
     # Architecture check bypassed for 386 installer
 
-    ; Detect and silently uninstall previous version
+    StrCpy $IsUpgrade "0"
+
+    ; Detect existing installation
     SetRegView 64
     ReadRegStr $0 HKLM "${UNINST_KEY}" "UninstallString"
     ReadRegStr $1 HKLM "${UNINST_KEY}" "DisplayVersion"
     ${If} $0 != ""
-    ${AndIf} $1 != "${INFO_PRODUCTVERSION}"
-        ${GetParent} "$0" $R0
-        ExecWait '"$0" /S _?=$R0'
+        ; Derive install dir from UninstallString (strip quotes and filename)
+        StrCpy $R0 $0
+        StrCpy $R1 $R0 1 ; first char
+        ${If} $R1 == '"'
+            StrCpy $R0 $R0 "" 1 ; remove leading quote
+            StrCpy $R0 $R0 -1   ; remove trailing quote
+        ${EndIf}
+        ${GetParent} $R0 $INSTDIR
+
+        ${If} $1 == "${INFO_PRODUCTVERSION}"
+            MessageBox MB_YESNO|MB_ICONQUESTION "$(^Name) v${INFO_PRODUCTVERSION} is already installed.$\n$\nDo you want to reinstall?" IDYES doReinstall
+            Abort
+        ${Else}
+            MessageBox MB_YESNO|MB_ICONQUESTION "$(^Name) v$1 is already installed.$\n$\nDo you want to upgrade to v${INFO_PRODUCTVERSION}?" IDYES doUpgrade
+            Abort
+            doUpgrade:
+                ExecWait '"$INSTDIR\uninstall.exe" /S _?=$INSTDIR'
+        ${EndIf}
+        doReinstall:
+        StrCpy $IsUpgrade "1"
     ${EndIf}
 FunctionEnd
 
