@@ -1062,7 +1062,9 @@ func (a *App) getCoreDir() string {
 
 // CheckVfoxInPath checks if vfox is currently in the User PATH environment variable
 func (a *App) CheckVfoxInPath() (bool, error) {
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path', 'User')").Output()
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path', 'User')")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
 	if err != nil {
 		return false, err
 	}
