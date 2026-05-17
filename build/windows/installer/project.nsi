@@ -84,9 +84,8 @@ Function .onInit
     ReadRegStr $1 HKLM "${UNINST_KEY}" "DisplayVersion"
     ${If} $0 != ""
     ${AndIf} $1 != "${INFO_PRODUCTVERSION}"
-        CopyFiles /SILENT "$0" "$TEMP\vfoxG_uninst.exe"
-        ExecWait '"$TEMP\vfoxG_uninst.exe" /S _?=$INSTDIR'
-        Delete "$TEMP\vfoxG_uninst.exe"
+        ${GetParent} "$0" $R0
+        ExecWait '"$0" /S _?=$R0'
     ${EndIf}
 FunctionEnd
 
