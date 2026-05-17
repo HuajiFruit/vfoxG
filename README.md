@@ -5,41 +5,43 @@
 </p>
 
 <p align="center">
-  <strong>vfox 图形化管理界面 &middot; Wails + Vue 3</strong>
+  <strong>vfox GUI Manager &middot; Wails + Vue 3</strong><br>
+  <strong>vfox 图形化管理界面</strong>
 </p>
 
 <p align="center">
-  统一管理 vfox SDK 和系统自定义 SDK，一键切换，告别命令行
+  Manage vfox SDKs and custom system SDKs in one place. Switch versions with a single click.<br>
+  统一管理 vfox SDK 和系统自定义 SDK，一键切换，告别命令行。
 </p>
 
 ---
 
-## 功能特性
+## Features / 功能特性
 
-### SDK 管理
-- **版本管理** — 查看、安装、卸载 vfox 管理的 SDK 版本
-- **一键切换** — 点击应用即可全局切换 SDK 版本，无需手动输入命令
-- **自定义 SDK** — 支持将系统已安装的 SDK（如 `C:\Python314`）纳入统一管理
-- **自动扫描** — 启动时自动检测系统中已安装的常见 SDK
+### SDK Management / SDK 管理
+- **Version Management / 版本管理** — View, install, and uninstall vfox-managed SDK versions. / 查看、安装、卸载 vfox 管理的 SDK 版本。
+- **One-Click Switch / 一键切换** — Switch global SDK version with a single click. No command line needed. / 点击应用即可全局切换 SDK 版本，无需手动输入命令。
+- **Custom SDK / 自定义 SDK** — Bring system-installed SDKs (e.g. `C:\Python314`) under unified management. / 支持将系统已安装的 SDK 纳入统一管理。
+- **Auto Scan / 自动扫描** — Automatically detect common SDKs installed on the system at startup. / 启动时自动检测系统中已安装的常见 SDK。
 
-### 插件市场
-- **在线浏览** — 查看所有可用的 vfox 插件，一键添加
-- **版本搜索** — 搜索远程可安装的 SDK 版本，带实时进度
+### Plugin Marketplace / 插件市场
+- **Online Browse / 在线浏览** — Browse all available vfox plugins and add them with one click. / 查看所有可用的 vfox 插件，一键添加。
+- **Version Search / 版本搜索** — Search for installable SDK versions remotely, with real-time progress. / 搜索远程可安装的 SDK 版本，带实时进度。
 
-### 系统集成
-- **PATH 接管** — 解决 Windows 11 应用别名（App Alias）与 SDK 冲突的问题
-- **Junction 架构** — 通过统一的 `~/.vfox/sdks/` 软链接管理所有 SDK，切换版本无需修改系统 PATH
-- **UAC 提权** — 需要修改系统级 PATH 时自动请求管理员权限
+### System Integration / 系统集成
+- **PATH Takeover / PATH 接管** — Resolve conflicts between Windows 11 App Aliases and SDKs. / 解决 Windows 11 应用别名（App Alias）与 SDK 冲突的问题。
+- **Junction Architecture / Junction 架构** — All SDKs exposed via unified `~/.vfox/sdks/` symlinks. Switching versions never touches system PATH. / 通过统一的软链接管理所有 SDK，切换版本无需修改系统 PATH。
+- **UAC Elevation / UAC 提权** — Auto-request admin privileges when system-level PATH changes are needed. / 需要修改系统级 PATH 时自动请求管理员权限。
 
-### 其他
-- **中英双语** — 支持中文和英文界面，自动跟随系统语言
-- **现代 UI** — Material Design 3 风格，支持动画过渡和毛玻璃效果
+### Others / 其他
+- **Bilingual / 中英双语** — Supports Chinese and English UI, auto-follows system locale. / 支持中文和英文界面，自动跟随系统语言。
+- **Modern UI / 现代 UI** — Material Design 3 style with animated transitions and frosted glass effects. / Material Design 3 风格，支持动画过渡和毛玻璃效果。
 
-## 截图
+## Screenshots / 截图
 
-> 待补充
+> Coming soon / 待补充
 
-## 技术架构
+## Architecture / 技术架构
 
 ```
 +------------------------------------------+
@@ -49,119 +51,129 @@
 |        Wails v2 Bridge (RPC)             |
 +------------------------------------------+
 |           Backend (Go)                   |
-|  app.go — SDK 管理、版本切换、PATH 操作   |
+|  app.go — SDK mgmt, version switch, PATH |
 +------------------------------------------+
 |         vfox CLI (core/)                 |
-|  vfox.exe — 底层版本管理引擎              |
+|  vfox.exe — underlying engine            |
 +------------------------------------------+
 ```
 
-**核心设计：统一 Junction 架构**
+**Core Design: Unified Junction Architecture / 核心设计：统一 Junction 架构**
+
+Whether installed by vfox or added manually as a custom SDK, every SDK is exposed through a single Junction (symlink) at `~/.vfox/sdks/{name}`. Switching versions only updates the Junction target — the system PATH stays constant.
 
 无论是 vfox 安装的 SDK 还是用户自定义的系统 SDK，都通过 `~/.vfox/sdks/{name}` 这个 Junction（软链接）统一对外暴露。切换版本时只需更新 Junction 指向，系统 PATH 始终不变。
 
-## 前置要求
+## Prerequisites / 前置要求
 
-| 工具 | 版本 | 用途 |
-|------|------|------|
-| [Go](https://go.dev/) | 1.21+ | 编译后端 |
-| [Node.js](https://nodejs.org/) | 18+ | 编译前端 |
-| [Wails CLI](https://wails.io/docs/gettingstarted/installation) | v2 | 构建框架 |
-| [NSIS](https://nsis.sourceforge.io/) | 3.x | 打包安装程序（可选） |
+| Tool / 工具 | Version / 版本 | Purpose / 用途 |
+|-------------|---------------|----------------|
+| [Go](https://go.dev/) | 1.21+ | Build backend / 编译后端 |
+| [Node.js](https://nodejs.org/) | 18+ | Build frontend / 编译前端 |
+| [Wails CLI](https://wails.io/docs/gettingstarted/installation) | v2 | Build framework / 构建框架 |
+| [NSIS](https://nsis.sourceforge.io/) | 3.x | Package installer (optional) / 打包安装程序（可选） |
 
-## 快速开始
+## Quick Start / 快速开始
 
-### 1. 克隆项目
+### 1. Clone / 克隆
 
 ```bash
-git clone https://github.com/yourname/vfoxN.git
+git clone https://github.com/HuajiFruit/vfoxN.git
 cd vfoxN
 ```
 
-### 2. 安装 vfox 核心
+### 2. Install vfox Core / 安装 vfox 核心
+
+This project depends on the vfox CLI at runtime. Place it in the `core/` directory manually:
 
 本项目运行时依赖 vfox 命令行工具，需要手动放置到 `core/` 目录：
 
 ```
 vfoxN/
 ├── core/
-│   └── vfox.exe    <- 从 https://github.com/version-fox/vfox/releases 下载
-├── app.go
+│   └── vfox.exe    <- Download from https://github.com/version-fox/vfox/releases
+├── app.go            # 从 https://github.com/version-fox/vfox/releases 下载
 ├── main.go
 ├── frontend/
 └── ...
 ```
 
-> `core/` 目录已被 `.gitignore` 排除，不会被提交到仓库。
+> The `core/` directory is excluded by `.gitignore` and will not be committed. / `core/` 目录已被 `.gitignore` 排除，不会被提交到仓库。
 
-### 3. 开发模式
+### 3. Dev Mode / 开发模式
 
 ```bash
-# 安装前端依赖
+# Install frontend dependencies / 安装前端依赖
 cd frontend && npm install && cd ..
 
-# 启动开发模式（Go 后端 + Vite 热重载）
+# Start dev mode (Go backend + Vite HMR) / 启动开发模式（Go 后端 + Vite 热重载）
 wails dev
 ```
 
+The app window opens automatically. Frontend changes hot-reload, Go changes trigger recompilation.
+
 应用窗口会自动打开。修改前端代码会自动热重载，修改 Go 代码会自动重新编译。
 
-### 4. 构建发布版
+### 4. Build / 构建
 
 ```bash
-# 构建单文件可执行程序
+# Build a single portable executable / 构建单文件可执行程序
 wails build -clean
 
-# 构建 Windows NSIS 安装包
+# Build Windows NSIS installer / 构建 Windows NSIS 安装包
 wails build -nsis -clean
 ```
 
-构建产物位于 `build/bin/` 目录。
+Output goes to `build/bin/`. / 构建产物位于 `build/bin/` 目录。
 
-## 项目结构
+## Project Structure / 项目结构
 
 ```
 vfoxN/
-├── app.go                  # Go 后端核心逻辑（SDK 管理、PATH 操作）
-├── main.go                 # Wails 应用入口
-├── app_test.go             # 单元测试
-├── app_integration_test.go # 集成测试（需 vfox 环境）
-├── go.mod / go.sum         # Go 依赖
-├── wails.json              # Wails 项目配置
-├── core/                   # vfox 运行时（不纳入版本控制）
+├── app.go                  # Go backend core (SDK management, PATH ops)
+├── main.go                 # Wails app entry point
+├── app_test.go             # Unit tests / 单元测试
+├── app_integration_test.go # Integration tests (needs vfox) / 集成测试
+├── go.mod / go.sum         # Go dependencies / Go 依赖
+├── wails.json              # Wails project config / Wails 项目配置
+├── core/                   # vfox runtime (not versioned) / vfox 运行时
 │   └── vfox.exe
-├── frontend/               # Vue 3 前端
+├── frontend/               # Vue 3 frontend / Vue 3 前端
 │   ├── src/
-│   │   ├── App.vue         # 主布局（侧边栏 + 路由）
+│   │   ├── App.vue         # Main layout (sidebar + router) / 主布局
 │   │   ├── components/
-│   │   │   ├── SdkManager.vue    # SDK 管理主页面
-│   │   │   ├── PluginMarket.vue  # 插件市场
-│   │   │   └── Settings.vue      # 设置页面
-│   │   ├── i18n.ts         # 国际化（中/英）
-│   │   └── style.css       # 全局样式
+│   │   │   ├── SdkManager.vue    # SDK management page / SDK 管理页面
+│   │   │   ├── PluginMarket.vue  # Plugin marketplace / 插件市场
+│   │   │   └── Settings.vue      # Settings page / 设置页面
+│   │   ├── i18n.ts         # Internationalization (zh/en) / 国际化
+│   │   └── style.css       # Global styles / 全局样式
 │   └── index.html
 └── build/
-    └── windows/            # Windows 构建资源（图标、清单）
+    └── windows/            # Windows build assets (icon, manifest)
 ```
 
-## 关键实现细节
+## Key Implementation Details / 关键实现细节
 
-### vfox 命令调用
+### vfox Command Invocation / vfox 命令调用
+
+All vfox commands go through `RunVfoxCommand`, which sets `__VFOX_SHELL=cmd` to prevent vfox from spawning an interactive shell that would deadlock the process.
 
 所有 vfox 命令通过 `RunVfoxCommand` 统一调用，使用 `__VFOX_SHELL=cmd` 环境变量防止 vfox 弹出交互式 Shell 导致进程死锁。
 
-### 版本切换流程
+### Version Switch Flow / 版本切换流程
 
-1. 用户点击应用 -> 前端乐观更新 UI
-2. 后端异步执行 `vfox use --global name@version`
-3. vfox 更新 `.vfox.toml` + 创建 Junction + 写入注册表
-4. 后端发送 `sdk-list-changed` 事件
-5. 前端刷新状态
+1. User clicks "Apply" -> frontend optimistically updates UI / 用户点击应用 -> 前端乐观更新 UI
+2. Backend asynchronously runs `vfox use --global name@version` / 后端异步执行
+3. vfox updates `.vfox.toml` + creates Junction + writes registry / vfox 更新配置 + 创建 Junction + 写入注册表
+4. Backend emits `sdk-list-changed` event / 后端发送事件
+5. Frontend refreshes state / 前端刷新状态
 
-### 系统 PATH 接管
+### System PATH Takeover / 系统 PATH 接管
+
+Windows 11 App Execution Aliases (e.g. `python.exe` -> Microsoft Store) can shadow vfox's PATH entries. The "Add to System PATH" feature uses admin privileges to prepend `~/.vfox/sdks/{name}` to the Machine PATH, ensuring vfox-managed versions always take priority.
 
 Windows 11 的应用执行别名（如 `python.exe` -> Microsoft Store）会覆盖 vfox 的 PATH 设置。添加到系统 PATH 功能通过管理员权限将 `~/.vfox/sdks/{name}` 注入到 Machine PATH 最前面，确保 vfox 管理的版本永远优先。
 
-## 许可证
+## License / 许可证
 
 [Apache License 2.0](LICENSE)
