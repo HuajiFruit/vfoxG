@@ -174,6 +174,16 @@ Windows 11 App Execution Aliases (e.g. `python.exe` -> Microsoft Store) can shad
 
 Windows 11 的应用执行别名（如 `python.exe` -> Microsoft Store）会覆盖 vfox 的 PATH 设置。添加到系统 PATH 功能通过管理员权限将 `~/.vfox/sdks/{name}` 注入到 Machine PATH 最前面，确保 vfox 管理的版本永远优先。
 
+## Acknowledgments / 致谢
+
+This project bundles and depends on [vfox](https://github.com/version-fox/vfox), created by Han Li and contributors. vfox is licensed under the Apache License 2.0 and is redistributed here in unmodified binary form.
+
+本项目包含并依赖 [vfox](https://github.com/version-fox/vfox)，由 Han Li 及贡献者创建。vfox 基于 Apache License 2.0 开源协议，本项目中以未修改的二进制形式重新分发。
+
+vfoxN is an independent third-party GUI and is not affiliated with or endorsed by the vfox project.
+
+vfoxN 是独立的第三方图形化界面，与 vfox 项目无关联，亦非其官方产品。
+
 ## License / 许可证
 
 [Apache License 2.0](LICENSE)
