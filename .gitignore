@@ -1,0 +1,32 @@
+# Build output
+build/bin/
+*.syso
+
+# Compiled binaries
+*.exe
+
+# Vfox core runtime (user provides their own)
+core/
+
+# Dependencies
+node_modules/
+frontend/dist/
+frontend/package.json.md5
+
+# Wails generated bindings (auto-regenerated on build)
+frontend/wailsjs/
+
+# IDE
+.idea/
+.vscode/
+.claude/
+.gemini/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp / Debug
+*.debug.txt
+scratch/
+debug_test.go
