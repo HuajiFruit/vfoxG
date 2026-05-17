@@ -102,7 +102,7 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	// 自动输入 "y" 以跳过任何预料之外的交互式确认 (最多输入5次y)
 	cmd.Stdin = strings.NewReader("y\ny\ny\ny\ny\n")
-	cmd.Env = append(os.Environ(), "__VFOX_SHELL=cmd")
+	cmd.Env = a.getCleanedEnvForVfox()
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -478,13 +478,23 @@ func (a *App) getSdkRoot(exePath string) string {
 }
 
 // ensureJunction creates a junction from linkPath -> target.
-// If it already exists and is valid, it does nothing.
+// If it already exists and points to the correct target, it does nothing.
 func (a *App) ensureJunction(linkPath string, target string) error {
-	// If already exists and is valid, skip
-	if info, err := os.Stat(linkPath); err == nil && info.IsDir() {
-		return nil
+	// If already exists, verify it points to the correct target
+	if fi, err := os.Lstat(linkPath); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeIrregular != 0 {
+			existing, readErr := os.Readlink(linkPath)
+			if readErr == nil && strings.EqualFold(filepath.Clean(existing), filepath.Clean(target)) {
+				return nil // Junction already points to the correct target
+			}
+		} else if fi.IsDir() {
+			// Regular directory, not a junction — check if it's the same path
+			if strings.EqualFold(filepath.Clean(linkPath), filepath.Clean(target)) {
+				return nil
+			}
+		}
 	}
-	// Remove any stale entry
+	// Remove any stale/mismatched entry
 	_ = os.RemoveAll(linkPath)
 	// Ensure parent dir exists
 	_ = os.MkdirAll(filepath.Dir(linkPath), 0755)
@@ -729,6 +739,9 @@ func (a *App) ScanSystemSdks() {
 		}
 	}
 
+	// Build a clean PATH that excludes .vfox entries, for child processes only.
+	// IMPORTANT: Do NOT use os.Setenv here — it modifies global process state
+	// and races with concurrent goroutines (RunVfoxCommand, RunVfoxWithProgress, etc.).
 	originalPath := os.Getenv("PATH")
 	paths := filepath.SplitList(originalPath)
 	var cleanPaths []string
@@ -737,8 +750,18 @@ func (a *App) ScanSystemSdks() {
 			cleanPaths = append(cleanPaths, p)
 		}
 	}
-	os.Setenv("PATH", strings.Join(cleanPaths, string(filepath.ListSeparator)))
-	defer os.Setenv("PATH", originalPath)
+	cleanPathStr := strings.Join(cleanPaths, string(filepath.ListSeparator))
+
+	// Build clean env slice for child processes
+	baseEnv := os.Environ()
+	var cleanEnv []string
+	for _, e := range baseEnv {
+		if strings.HasPrefix(strings.ToLower(e), "path=") {
+			cleanEnv = append(cleanEnv, "PATH="+cleanPathStr)
+		} else {
+			cleanEnv = append(cleanEnv, e)
+		}
+	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -748,11 +771,22 @@ func (a *App) ScanSystemSdks() {
 		wg.Add(1)
 		go func(d systemSDKDef) {
 			defer wg.Done()
-			exePath, err := exec.LookPath(d.Exe)
+			// Use exec.Command + cmd.Env to look up the exe in the clean PATH
+			// instead of exec.LookPath which reads the global os PATH.
+			lookCmd := exec.Command("cmd", "/c", "where", d.Exe)
+			lookCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+			lookCmd.Env = cleanEnv
+			whereOut, err := lookCmd.Output()
 			if err != nil {
 				return
 			}
-			ver := a.tryGetVersion(d.Exe, d.VerArgs)
+			exePath := strings.TrimSpace(strings.Split(string(whereOut), "\n")[0])
+			exePath = strings.TrimRight(exePath, "\r")
+			if exePath == "" {
+				return
+			}
+
+			ver := a.tryGetVersionWithEnv(d.Exe, d.VerArgs, cleanEnv)
 			if ver == "" {
 				ver = "unknown"
 			}
@@ -903,11 +937,20 @@ func (a *App) RemoveNonVfoxSdk(name string, exePath string) error {
 }
 
 func (a *App) tryGetVersion(exe string, args []string) string {
+	return a.tryGetVersionWithEnv(exe, args, nil)
+}
+
+// tryGetVersionWithEnv runs the version command with an optional custom environment.
+// If env is nil, inherits the current process environment.
+func (a *App) tryGetVersionWithEnv(exe string, args []string, env []string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if env != nil {
+		cmd.Env = env
+	}
 	out, _ := cmd.CombinedOutput()
 	if len(out) == 0 {
 		return ""

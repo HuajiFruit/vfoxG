@@ -90,7 +90,7 @@ Section
 
     ; Include the core directory (contains vfox.exe)
     SetOutPath "$INSTDIR\core"
-    File /r "D:\Desktop\files\vfoxG-main\core\*.*"
+    File /r "..\..\..\core\*.*"
     
     ; Reset the out path
     SetOutPath $INSTDIR
