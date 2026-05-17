@@ -1,7 +1,7 @@
-# vfoxN
+# vfoxG
 
 <p align="center">
-  <img src="build/appicon.png" alt="vfoxN" width="128" />
+  <img src="build/appicon.png" alt="vfoxG" width="128" />
 </p>
 
 <p align="center">
@@ -78,8 +78,8 @@ Whether installed by vfox or added manually as a custom SDK, every SDK is expose
 ### 1. Clone / 克隆
 
 ```bash
-git clone https://github.com/HuajiFruit/vfoxN.git
-cd vfoxN
+git clone https://github.com/HuajiFruit/vfoxG.git
+cd vfoxG
 ```
 
 ### 2. Install vfox Core / 安装 vfox 核心
@@ -89,7 +89,7 @@ This project depends on the vfox CLI at runtime. Place it in the `core/` directo
 本项目运行时依赖 vfox 命令行工具，需要手动放置到 `core/` 目录：
 
 ```
-vfoxN/
+vfoxG/
 ├── core/
 │   └── vfox.exe    <- Download from https://github.com/version-fox/vfox/releases
 ├── app.go            # 从 https://github.com/version-fox/vfox/releases 下载
@@ -129,7 +129,7 @@ Output goes to `build/bin/`. / 构建产物位于 `build/bin/` 目录。
 ## Project Structure / 项目结构
 
 ```
-vfoxN/
+vfoxG/
 ├── app.go                  # Go backend core (SDK management, PATH ops)
 ├── main.go                 # Wails app entry point
 ├── app_test.go             # Unit tests / 单元测试
@@ -182,6 +182,6 @@ This project bundles [vfox](https://github.com/version-fox/vfox) (Apache License
 
 本项目以未修改的二进制形式包含 [vfox](https://github.com/version-fox/vfox)（Apache License 2.0，版权归 Han Li 及贡献者所有）。
 
-vfoxN is an independent third-party GUI and is not affiliated with or endorsed by the vfox project.
+vfoxG is an independent third-party GUI and is not affiliated with or endorsed by the vfox project.
 
-vfoxN 是独立的第三方图形化界面，与 vfox 项目无关联，亦非其官方产品。
+vfoxG 是独立的第三方图形化界面，与 vfox 项目无关联，亦非其官方产品。

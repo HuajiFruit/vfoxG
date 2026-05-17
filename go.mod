@@ -1,4 +1,4 @@
-module vfoxN
+module vfoxG
 
 go 1.23.0
 

@@ -109,7 +109,7 @@ onUnmounted(() => {
     <div class="sidebar">
       <div class="logo">
         <img src="./assets/icons/icon.png" alt="logo"/>
-        <h2>vfoxN</h2>
+        <h2>vfoxG</h2>
       </div>
       <nav>
         <button class="nav-btn" :class="{active: currentTab === 'sdk'}" @click="switchTab('sdk')">
