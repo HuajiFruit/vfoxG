@@ -80,6 +80,8 @@ Function .onInit
 FunctionEnd
 
 Section
+    SetOverwrite on
+
     !insertmacro wails.setShellContext
 
     !insertmacro wails.webview2runtime
