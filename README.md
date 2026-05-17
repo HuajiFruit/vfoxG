@@ -39,7 +39,7 @@
 
 ## Screenshots / 截图
 
-> Coming soon / 待补充
+![vfoxG Screenshot](build/screenshot.png)
 
 ## Architecture / 技术架构
 

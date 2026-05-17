@@ -26,6 +26,9 @@ frontend/wailsjs/
 .DS_Store
 Thumbs.db
 
+# Screenshots
+snapshot/
+
 # Temp / Debug
 *.debug.txt
 scratch/
