@@ -33,3 +33,9 @@ snapshot/
 *.debug.txt
 scratch/
 debug_test.go
+
+# Release builds (large binaries)
+release/
+
+# Generated nfpm config
+nfpm.yaml

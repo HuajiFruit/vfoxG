@@ -1,0 +1,22 @@
+name: "vfoxG"
+arch: "${NFPM_ARCH}"
+platform: "linux"
+version: "0.2.0"
+section: "default"
+priority: "extra"
+maintainer: "HuajiFruit <jimdeng2019@outlook.com>"
+description: "Cross-platform SDK manager GUI based on vfox"
+vendor: "HuajiFruit"
+license: "MIT"
+bindir: /usr/bin
+contents:
+  - src: ./build/bin/vfoxG-linux-${NFPM_ARCH}
+    dst: /usr/bin/vfoxg
+    type: file
+    file_info:
+      mode: 0755
+  - src: ./core/linux/${NFPM_CORE_ARCH}/vfox
+    dst: /usr/lib/vfoxg/core/linux/${NFPM_CORE_ARCH}/vfox
+    type: file
+    file_info:
+      mode: 0755

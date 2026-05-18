@@ -10,9 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	stdruntime "runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -41,11 +41,12 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) getCleanedEnvForVfox() []string {
 	env := os.Environ()
 	vfoxSdksDir := filepath.Join(a.getVfoxHome(), "sdks")
+	sep := string(filepath.ListSeparator) // ";" on Windows, ":" on Unix
 
 	for i, e := range env {
 		if strings.HasPrefix(strings.ToLower(e), "path=") {
 			pathVal := e[5:]
-			parts := strings.Split(pathVal, ";")
+			parts := strings.Split(pathVal, sep)
 			var clean []string
 			for _, p := range parts {
 				pTrim := strings.TrimSpace(p)
@@ -57,12 +58,16 @@ func (a *App) getCleanedEnvForVfox() []string {
 				}
 				clean = append(clean, pTrim)
 			}
-			env[i] = "PATH=" + strings.Join(clean, ";")
+			env[i] = "PATH=" + strings.Join(clean, sep)
 			break
 		}
 	}
-	// 添加伪装变量，使用 cmd 可以避免 vfox 弹出 powershell 子进程而导致死锁
-	return append(env, "__VFOX_SHELL=cmd")
+	// 添加伪装变量，使用 cmd/bash 可以避免 vfox 弹出子 shell 而导致死锁
+	shellName := "bash"
+	if stdruntime.GOOS == "windows" {
+		shellName = "cmd"
+	}
+	return append(env, "__VFOX_SHELL="+shellName)
 }
 
 // RunVfoxCommand 执行短生命周期的 vfox 命令，带 15s 超时防止前端卡死
@@ -70,10 +75,9 @@ func (a *App) RunVfoxCommand(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, filepath.Join(a.getCoreDir(), "vfox.exe"), args...)
+	cmd := exec.CommandContext(ctx, filepath.Join(a.getCoreDir(), getVfoxExeName()), args...)
 
-	// 设置隐藏窗口 (Windows 特有，防止弹黑框)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideWindow(cmd)
 	// 伪装为 cmd 以防止 vfox 尝试重新加载父进程（导致应用多开的严重 BUG）
 	cmd.Env = a.getCleanedEnvForVfox()
 
@@ -98,8 +102,8 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, filepath.Join(a.getCoreDir(), "vfox.exe"), args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd := exec.CommandContext(ctx, filepath.Join(a.getCoreDir(), getVfoxExeName()), args...)
+	hideWindow(cmd)
 	// 自动输入 "y" 以跳过任何预料之外的交互式确认 (最多输入5次y)
 	cmd.Stdin = strings.NewReader("y\ny\ny\ny\ny\n")
 	cmd.Env = a.getCleanedEnvForVfox()
@@ -440,12 +444,6 @@ func (a *App) GetSdkDetail(name string) (SdkDetail, error) {
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
-// psEscape escapes a string for safe interpolation into a PowerShell single-quoted string.
-// In PowerShell single-quoted strings, a literal single quote is written as ”.
-func psEscape(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
-}
-
 // UseVersion 切换到指定版本
 func (a *App) UseVersion(name, version string) (string, error) {
 	// 异步执行避免 RPC 卡住，前端通过 sdk-list-changed 事件感知完成
@@ -456,9 +454,12 @@ func (a *App) UseVersion(name, version string) (string, error) {
 		// vfox 会自动创建正确的 junction（指向如 .../v-3.12.7/python-3.12.7），
 		// 而 GetVersionPath 返回的是上一级目录（.../v-3.12.7），如果我们覆盖
 		// 会导致 PATH 多出一层目录，SDK 实际上无法被找到。
-		_, _ = a.RunVfoxCommand("use", "--global", name+"@"+version)
+		_, err := a.RunVfoxCommand("use", "--global", name+"@"+version)
 
 		if a.ctx != nil {
+			if err != nil {
+				runtime.EventsEmit(a.ctx, "vfox-log", "[ERROR] "+err.Error())
+			}
 			runtime.EventsEmit(a.ctx, "vfox-log", "[DONE]")
 			runtime.EventsEmit(a.ctx, "sdk-list-changed")
 		}
@@ -477,36 +478,6 @@ func (a *App) getSdkRoot(exePath string) string {
 	return dir
 }
 
-// ensureJunction creates a junction from linkPath -> target.
-// If it already exists and points to the correct target, it does nothing.
-func (a *App) ensureJunction(linkPath string, target string) error {
-	// If already exists, verify it points to the correct target
-	if fi, err := os.Lstat(linkPath); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeIrregular != 0 {
-			existing, readErr := os.Readlink(linkPath)
-			if readErr == nil && strings.EqualFold(filepath.Clean(existing), filepath.Clean(target)) {
-				return nil // Junction already points to the correct target
-			}
-		} else if fi.IsDir() {
-			// Regular directory, not a junction — check if it's the same path
-			if strings.EqualFold(filepath.Clean(linkPath), filepath.Clean(target)) {
-				return nil
-			}
-		}
-	}
-	// Remove any stale/mismatched entry
-	_ = os.RemoveAll(linkPath)
-	// Ensure parent dir exists
-	_ = os.MkdirAll(filepath.Dir(linkPath), 0755)
-
-	cmd := exec.Command("cmd", "/c", "mklink", "/J", linkPath, target)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("mklink /J failed: %v", err)
-	}
-	return nil
-}
-
 // removeJunctionIfExists removes a junction/directory if it exists.
 func (a *App) removeJunctionIfExists(linkPath string) {
 	_ = os.RemoveAll(linkPath)
@@ -517,15 +488,17 @@ func (a *App) removeJunctionIfExists(linkPath string) {
 // GetRuntimePackage to fail with "runtime not found".
 //
 // Instead, we directly:
-// 1. Create a junction at ~/.vfox/sdks/{name} -> system SDK root
-// 2. Write the version to ~/.vfox/.vfox.toml
-// 3. Update the Windows registry PATH (via vfox's env_keys.lua convention)
+// 1. Clear vfox's current selection via `vfox unuse`
+// 2. Create a junction/symlink at ~/.vfox/sdks/{name} -> system SDK root
 func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
 	root := a.getSdkRoot(exePath)
 
 	// 1. Clear the vfox selection so that both don't show "当前" at the same time
 	// We MUST do this synchronously BEFORE overwriting the symlink, otherwise vfox might delete our custom symlink
-	a.RunVfoxCommand("unuse", "--global", name)
+	if _, err := a.RunVfoxCommand("unuse", "--global", name); err != nil {
+		// Non-fatal: log and continue — the junction creation is more important
+		fmt.Printf("[warn] vfox unuse %s failed: %v\n", name, err)
+	}
 
 	// 2. Create junction: ~/.vfox/sdks/{name} -> system SDK root
 	sdkLinkPath := filepath.Join(a.getVfoxHome(), "sdks", name)
@@ -552,8 +525,11 @@ func (a *App) UnuseVersion(name string) (string, error) {
 		sdkLinkPath := filepath.Join(a.getVfoxHome(), "sdks", name)
 		a.removeJunctionIfExists(sdkLinkPath)
 
-		_, _ = a.RunVfoxCommand("unuse", "--global", name)
+		_, err := a.RunVfoxCommand("unuse", "--global", name)
 		if a.ctx != nil {
+			if err != nil {
+				runtime.EventsEmit(a.ctx, "vfox-log", "[ERROR] "+err.Error())
+			}
 			runtime.EventsEmit(a.ctx, "vfox-log", "[DONE]")
 			runtime.EventsEmit(a.ctx, "sdk-list-changed")
 		}
@@ -710,7 +686,6 @@ var systemSDKDefs = []systemSDKDef{
 var (
 	systemSdkCache   []SdkInfo
 	systemSdkCacheMu sync.RWMutex
-	systemSdkScanned bool
 )
 
 // GetCachedSystemSdks returns a copy of the cached system SDK list, never blocking
@@ -731,7 +706,6 @@ func (a *App) ScanSystemSdks() {
 		if err := json.Unmarshal(data, &cachedResult); err == nil && len(cachedResult) > 0 {
 			systemSdkCacheMu.Lock()
 			systemSdkCache = cachedResult
-			systemSdkScanned = true
 			systemSdkCacheMu.Unlock()
 			if a.ctx != nil {
 				runtime.EventsEmit(a.ctx, "system-sdks-ready")
@@ -771,17 +745,7 @@ func (a *App) ScanSystemSdks() {
 		wg.Add(1)
 		go func(d systemSDKDef) {
 			defer wg.Done()
-			// Use exec.Command + cmd.Env to look up the exe in the clean PATH
-			// instead of exec.LookPath which reads the global os PATH.
-			lookCmd := exec.Command("cmd", "/c", "where", d.Exe)
-			lookCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-			lookCmd.Env = cleanEnv
-			whereOut, err := lookCmd.Output()
-			if err != nil {
-				return
-			}
-			exePath := strings.TrimSpace(strings.Split(string(whereOut), "\n")[0])
-			exePath = strings.TrimRight(exePath, "\r")
+			exePath := findExecutable(d.Exe, cleanEnv)
 			if exePath == "" {
 				return
 			}
@@ -804,7 +768,6 @@ func (a *App) ScanSystemSdks() {
 
 	systemSdkCacheMu.Lock()
 	systemSdkCache = result
-	systemSdkScanned = true
 	systemSdkCacheMu.Unlock()
 
 	// Write updated results to cache file
@@ -814,28 +777,6 @@ func (a *App) ScanSystemSdks() {
 
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "system-sdks-ready")
-	}
-}
-
-func (a *App) autoImportNonVfoxSdks(autoDetected []SdkInfo) {
-	currentMap := a.GetNonVfoxSdksMap()
-	changed := false
-	for _, s := range autoDetected {
-		list := currentMap[s.Name]
-		found := false
-		for _, existing := range list {
-			if existing.Path == s.Path {
-				found = true
-				break
-			}
-		}
-		if !found {
-			currentMap[s.Name] = append(currentMap[s.Name], s)
-			changed = true
-		}
-	}
-	if changed {
-		a.saveNonVfoxSdksMap(currentMap)
 	}
 }
 
@@ -947,7 +888,7 @@ func (a *App) tryGetVersionWithEnv(exe string, args []string, env []string) stri
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, exe, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	hideWindow(cmd)
 	if env != nil {
 		cmd.Env = env
 	}
@@ -1046,37 +987,59 @@ func (a *App) GetAllSdks() ([]SdkInfo, error) {
 	return result, nil
 }
 
-// getCoreDir returns the absolute path to the "core" directory containing vfox.exe.
-// It checks the executable directory first (production) and falls back to CWD (dev).
+// getCoreDir returns the absolute path to the "core" directory containing vfox[.exe].
+// Search order:
+//  1. {exe_dir}/core/           — Windows NSIS install & dev mode
+//  2. {exe_dir}/../Resources/core/ — macOS .app bundle (Contents/MacOS/../Resources/core)
+//  3. /usr/lib/vfoxg/core/      — Linux DEB/RPM system install
+//  4. {cwd}/core/               — dev fallback
 func (a *App) getCoreDir() string {
-	exePath, err := os.Executable()
-	if err == nil {
-		prodCoreDir := filepath.Join(filepath.Dir(exePath), "core")
-		if _, err := os.Stat(prodCoreDir); !os.IsNotExist(err) {
-			return prodCoreDir
+	// Map Go runtime constants to actual core directory names
+	osName := stdruntime.GOOS
+	if osName == "darwin" {
+		osName = "macos"
+	}
+	archName := stdruntime.GOARCH
+	switch archName {
+	case "amd64":
+		archName = "x86_64"
+	case "386":
+		archName = "x86"
+	// arm64 stays as-is
+	}
+	suffix := filepath.Join(osName, archName)
+
+	// Build candidate list
+	var candidates []string
+
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		// 1. {exe_dir}/core/ — standard for Windows installer
+		candidates = append(candidates, filepath.Join(exeDir, "core"))
+		// 2. {exe_dir}/../Resources/core/ — macOS .app bundle
+		candidates = append(candidates, filepath.Join(exeDir, "..", "Resources", "core"))
+	}
+
+	// 3. /usr/lib/vfoxg/core/ — Linux system package
+	if stdruntime.GOOS == "linux" {
+		candidates = append(candidates, "/usr/lib/vfoxg/core")
+	}
+
+	// 4. {cwd}/core/ — dev fallback
+	if abs, err := filepath.Abs("core"); err == nil {
+		candidates = append(candidates, abs)
+	}
+
+	for _, c := range candidates {
+		full := filepath.Join(c, suffix)
+		if _, err := os.Stat(full); err == nil {
+			return full
 		}
 	}
-	devCoreDir, _ := filepath.Abs("core")
-	return devCoreDir
-}
 
-// CheckVfoxInPath checks if vfox is currently in the User PATH environment variable
-func (a *App) CheckVfoxInPath() (bool, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path', 'User')")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	out, err := cmd.Output()
-	if err != nil {
-		return false, err
-	}
-
-	pathStr := string(out)
-	vfoxCoreDir := a.getCoreDir()
-
-	// Check if either the app dir or core dir is in PATH
-	if strings.Contains(pathStr, vfoxCoreDir) {
-		return true, nil
-	}
-	return false, nil
+	// Ultimate fallback (may not exist, but avoids empty string)
+	baseDir, _ := filepath.Abs("core")
+	return filepath.Join(baseDir, suffix)
 }
 
 // GetActiveCustomSdk reads the junction target. If it points to an external path (not containing .vfox/cache),
@@ -1114,49 +1077,6 @@ func (a *App) GetActiveCustomSdk(name string) (string, error) {
 	return "", nil
 }
 
-// AddVfoxToPath appends vfox.exe directory to the User PATH
-func (a *App) AddVfoxToPath() error {
-	vfoxCoreDir := a.getCoreDir()
-	escDir := psEscape(vfoxCoreDir)
-
-	script := fmt.Sprintf(`
-$currentPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($currentPath -notlike '*%s*') {
-    $newPath = $currentPath
-    if (-not $newPath.EndsWith(';')) {
-        $newPath += ';'
-    }
-    $newPath += '%s'
-    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-}
-	`, escDir, escDir)
-
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	return cmd.Run()
-}
-
-// RemoveVfoxFromPath removes vfox.exe directory from the User PATH
-func (a *App) RemoveVfoxFromPath() error {
-	vfoxCoreDir := a.getCoreDir()
-	escDir := psEscape(vfoxCoreDir)
-
-	script := fmt.Sprintf(`
-$currentPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($currentPath -like '*%s*') {
-    # Split the path into an array, filter out the vfox core dir, then rejoin
-    $paths = $currentPath -split ';'
-    $newPaths = $paths | Where-Object { $_ -ne '%s' -and $_ -ne '' }
-    $newPath = $newPaths -join ';'
-    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-}
-	`, escDir, escDir)
-
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	return cmd.Run()
-}
-
 func (a *App) getVfoxHome() string {
 	if v := os.Getenv("VFOX_HOME"); v != "" {
 		return v
@@ -1166,254 +1086,4 @@ func (a *App) getVfoxHome() string {
 		return filepath.Join(home, ".vfox")
 	}
 	return ""
-}
-
-// runElevatedScriptHelper creates a temp script and runs it with UAC elevation, waiting for completion.
-func runElevatedScriptHelper(scriptContent string, doneFile string) error {
-	tmpScript, tempErr := os.CreateTemp("", "vfox_elevated_*.ps1")
-	if tempErr != nil {
-		return fmt.Errorf("failed to create temp script: %v", tempErr)
-	}
-	tmpScriptPath := tmpScript.Name()
-	tmpScript.Write([]byte(scriptContent))
-	tmpScript.Close()
-	defer os.Remove(tmpScriptPath)
-
-	psCmd := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; try { Start-Process powershell -WindowStyle Hidden -Verb RunAs -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '%s' -Wait } catch { exit 1 }`, tmpScriptPath)
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", psCmd)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("elevation failed or user cancelled: %v", err)
-	}
-
-	if _, err := os.Stat(doneFile); err != nil {
-		return fmt.Errorf("script did not complete successfully (elevation cancelled or failed)")
-	}
-	return nil
-}
-
-// HijackSystemPath injects the given executable path (e.g. C:\Python314\python.exe) given SDK from both User and Machine PATH.
-// It saves the removed paths to ~/.vfox/hijacked_paths.json so they can be restored later.
-func (a *App) HijackSystemPath(name string, exePath string) error {
-	sdkDir := a.getSdkRoot(exePath)
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
-
-	doneFile := filepath.Join(os.TempDir(), fmt.Sprintf("vfox_hijack_%s.done", name))
-	os.Remove(doneFile)
-
-	script := fmt.Sprintf(`
-$ErrorActionPreference = 'Stop'
-$sdkDir = '%s'
-$hijackFile = '%s'
-$name = '%s'
-$vfoxSdksDir = '%s'
-
-function Clean-Path($targetPath, $scope) {
-    $current = [Environment]::GetEnvironmentVariable('Path', $scope)
-    if (-not $current) { return @() }
-    
-    $parts = $current -split ';'
-    $cleaned = @()
-    $removed = @()
-    
-    foreach ($p in $parts) {
-        $pTrim = $p.Trim()
-        if ($pTrim -eq '') { continue }
-        
-        if ($pTrim.ToLower().StartsWith($sdkDir.ToLower())) {
-            $removed += $pTrim
-        } else {
-            $cleaned += $pTrim
-        }
-    }
-    
-    if ($scope -eq 'Machine') {
-        $vfoxPath = Join-Path $vfoxSdksDir $name
-        $vfoxScripts = Join-Path $vfoxPath 'Scripts'
-        $vfoxBin = Join-Path $vfoxPath 'bin'
-        
-        $insert = @($vfoxPath, $vfoxScripts, $vfoxBin)
-        $finalCleaned = @()
-        foreach ($p in $insert) {
-            $finalCleaned += $p
-        }
-        foreach ($p in $cleaned) {
-            $pLower = $p.ToLower()
-            if ($pLower -ne $vfoxPath.ToLower() -and $pLower -ne $vfoxScripts.ToLower() -and $pLower -ne $vfoxBin.ToLower()) {
-                $finalCleaned += $p
-            }
-        }
-        $cleaned = $finalCleaned
-    }
-    
-    if ($removed.Length -gt 0 -or $scope -eq 'Machine') {
-        $newPath = $cleaned -join ';'
-        [Environment]::SetEnvironmentVariable('Path', $newPath, $scope)
-    }
-    return $removed
-}
-
-$removedUser = Clean-Path $sdkDir 'User'
-$removedMachine = Clean-Path $sdkDir 'Machine'
-
-$data = @{
-    UserPaths = @($removedUser)
-    MachinePaths = @($removedMachine)
-}
-
-$json = $data | ConvertTo-Json -Depth 10
-
-$allData = New-Object PSObject
-if (Test-Path $hijackFile) {
-    $allData = Get-Content $hijackFile -Raw | ConvertFrom-Json
-}
-$allData | Add-Member -MemberType NoteProperty -Name $name -Value $data -Force
-$allData | ConvertTo-Json -Depth 10 | Set-Content $hijackFile
-
-Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
-$result = [UIntPtr]::Zero
-[Win32.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
-New-Item -Path '%s' -ItemType File -Force | Out-Null
-`, psEscape(sdkDir), psEscape(hijackFile), psEscape(name), psEscape(filepath.Join(vfoxHome, "sdks")), psEscape(doneFile))
-
-	if err := runElevatedScriptHelper(script, doneFile); err != nil {
-		return err
-	}
-	return nil
-}
-
-// RestoreSystemPath restores the previously hijacked system path from ~/.vfox/hijacked_paths.json
-func (a *App) RestoreSystemPath(name string) error {
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
-
-	doneFile := filepath.Join(os.TempDir(), fmt.Sprintf("vfox_restore_%s.done", name))
-	os.Remove(doneFile)
-
-	script := fmt.Sprintf(`
-$ErrorActionPreference = 'Stop'
-$hijackFile = '%s'
-$name = '%s'
-$vfoxSdksDir = '%s'
-
-if (-not (Test-Path $hijackFile)) {
-    $allData = New-Object PSObject
-} else {
-    $allData = Get-Content $hijackFile -Raw | ConvertFrom-Json
-}
-$data = $null
-if ($null -ne $allData -and $null -ne $allData.PSObject.Properties[$name]) {
-    $data = $allData.PSObject.Properties[$name].Value
-}
-
-function Restore-Path($paths, $scope) {
-    if ((-not $paths -or $paths.Count -eq 0) -and $scope -ne 'Machine') { return }
-    $current = [Environment]::GetEnvironmentVariable('Path', $scope)
-    if (-not $current) { $current = '' }
-    $parts = $current -split ';'
-    $cleaned = @()
-    $vfoxPath = Join-Path $vfoxSdksDir $name
-    $vfoxScripts = Join-Path $vfoxPath 'Scripts'
-    $vfoxBin = Join-Path $vfoxPath 'bin'
-
-    foreach ($p in $parts) {
-        $pTrim = $p.Trim()
-        if ($pTrim -eq '') { continue }
-        
-        if ($scope -eq 'Machine') {
-            $pLower = $pTrim.ToLower()
-            if ($pLower -eq $vfoxPath.ToLower() -or $pLower -eq $vfoxScripts.ToLower() -or $pLower -eq $vfoxBin.ToLower()) {
-                continue
-            }
-        }
-        $cleaned += $pTrim
-    }
-
-    $newPath = $cleaned -join ';'
-    if ($paths) {
-        foreach ($p in $paths) {
-            if (-not ($newPath.ToLower().Contains($p.ToLower()))) {
-                if ($newPath.Length -gt 0 -and -not $newPath.EndsWith(';')) {
-                    $newPath = $p + ';' + $newPath
-                } else {
-                    $newPath = $p + ';' + $newPath
-                }
-            }
-        }
-    }
-    [Environment]::SetEnvironmentVariable('Path', $newPath, $scope)
-}
-
-if ($data) {
-    Restore-Path $data.UserPaths 'User'
-    Restore-Path $data.MachinePaths 'Machine'
-} else {
-    Restore-Path $null 'Machine'
-}
-
-if ($null -ne $allData.PSObject.Properties[$name]) {
-    $allData.PSObject.Properties.Remove($name)
-    $allData | ConvertTo-Json -Depth 10 | Set-Content $hijackFile
-}
-
-Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
-$result = [UIntPtr]::Zero
-[Win32.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
-New-Item -Path '%s' -ItemType File -Force | Out-Null
-`, psEscape(hijackFile), psEscape(name), psEscape(filepath.Join(vfoxHome, "sdks")), psEscape(doneFile))
-
-	if err := runElevatedScriptHelper(script, doneFile); err != nil {
-		return err
-	}
-	return nil
-}
-
-// HijackPluginSystemPath runs HijackSystemPath for a specific configured non-vfox SDK.
-func (a *App) HijackPluginSystemPath(pluginName string) error {
-	m := a.GetNonVfoxSdksMap()
-	if list, ok := m[pluginName]; ok && len(list) > 0 {
-		return a.HijackSystemPath(pluginName, list[0].Path)
-	}
-	// If no custom SDK is configured yet, use an impossible path so it doesn't delete anything, but still preps Machine PATH
-	return a.HijackSystemPath(pluginName, "C:\\VFOX_DUMMY_NEVER_MATCH\\fake.exe")
-}
-
-// RestorePluginSystemPath runs RestoreSystemPath for a specific configured non-vfox SDK.
-func (a *App) RestorePluginSystemPath(pluginName string) error {
-	return a.RestoreSystemPath(pluginName)
-}
-
-// CheckPluginWin11CompatMode returns true if a specific SDK path is currently hijacked.
-func (a *App) CheckPluginWin11CompatMode(pluginName string) bool {
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
-	if _, err := os.Stat(hijackFile); err == nil {
-		data, err := os.ReadFile(hijackFile)
-		if err == nil {
-			var parsed map[string]interface{}
-			if json.Unmarshal(data, &parsed) == nil {
-				_, exists := parsed[pluginName]
-				return exists
-			}
-		}
-	}
-	return false
-}
-
-// CheckWin11CompatMode returns true if any SDK path is currently hijacked.
-func (a *App) CheckWin11CompatMode() bool {
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
-	if _, err := os.Stat(hijackFile); err == nil {
-		data, err := os.ReadFile(hijackFile)
-		if err == nil {
-			var parsed map[string]interface{}
-			if json.Unmarshal(data, &parsed) == nil {
-				return len(parsed) > 0
-			}
-		}
-	}
-	return false
 }

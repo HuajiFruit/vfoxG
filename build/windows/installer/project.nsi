@@ -128,9 +128,9 @@ Section
 
     !insertmacro wails.files
 
-    ; Include the core directory (contains vfox.exe)
-    SetOutPath "$INSTDIR\core"
-    File /r "..\..\..\core\*.*"
+    ; Include the core directory (contains vfox.exe) - only the matching architecture
+    SetOutPath "$INSTDIR\core\windows\x86_64"
+    File /r "..\..\..\core\windows\x86_64\*.*"
     
     ; Reset the out path
     SetOutPath $INSTDIR
