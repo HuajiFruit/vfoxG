@@ -24,7 +24,7 @@ const handleConfirm = () => {
         <h2 class="modal-title">{{ t('sdk.remove_plugin') }}</h2>
         
         <p class="modal-message" style="margin-bottom: 8px;">
-          {{ t('sdk.confirm.remove_plugin') }} '{{ pluginName }}'?
+          {{ t('sdk.confirm.remove_plugin_message', { name: pluginName }) }}
         </p>
 
         <div v-if="customSdks.length > 0" class="sdk-choice-section">
@@ -50,7 +50,7 @@ const handleConfirm = () => {
           >
             <input type="radio" name="sdk-choice" :checked="selectedPath === sdk.path" @change="selectedPath = sdk.path" />
             <div class="sdk-choice-info">
-              <span class="sdk-choice-label">{{ sdk.version || 'unknown' }}</span>
+              <span class="sdk-choice-label">{{ sdk.version || t('common.unknown') }}</span>
               <code class="sdk-choice-path">{{ sdk.path }}</code>
             </div>
           </label>
@@ -90,20 +90,26 @@ const handleConfirm = () => {
   align-items: flex-start;
   gap: 12px;
   padding: 12px 16px;
-  border-radius: 12px;
-  background: var(--md-sys-color-surface-container);
+  border-radius: var(--md-shape-small);
+  background: var(--md-surface-container-low);
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 2px solid transparent;
+  transition: background-color 180ms cubic-bezier(0.2, 0, 0, 1),
+              border-color 180ms cubic-bezier(0.2, 0, 0, 1),
+              box-shadow 180ms cubic-bezier(0.2, 0, 0, 1);
+  border: 1px solid var(--panel-border, var(--md-outline-variant));
 }
 
 .sdk-choice-item:hover {
-  background: var(--md-sys-color-surface-container-high);
+  background: var(--md-surface-container);
+  border-color: var(--accent-cyan, var(--md-primary));
 }
 
 .sdk-choice-item.active {
   border-color: var(--md-primary);
-  background: color-mix(in srgb, var(--md-primary) 8%, var(--md-sys-color-surface-container));
+  background:
+    linear-gradient(90deg, rgba(115, 214, 208, 0.1), rgba(184, 169, 224, 0.12)),
+    var(--md-surface-container-low);
+  box-shadow: inset 0 0 0 1px rgba(184, 169, 224, 0.22);
 }
 
 .sdk-choice-item input[type="radio"] {
@@ -124,16 +130,16 @@ const handleConfirm = () => {
 .sdk-choice-label {
   font-weight: 600;
   font-size: 14px;
-  color: var(--md-sys-color-on-surface);
+  color: var(--md-on-surface);
 }
 
 .sdk-choice-path {
   font-size: 12px;
   color: var(--text-secondary);
   word-break: break-all;
-  background: var(--md-sys-color-surface-container-lowest);
+  background: var(--md-surface-container-lowest);
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--md-shape-extra-small);
 }
 
 .sdk-choice-desc {

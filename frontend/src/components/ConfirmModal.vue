@@ -1,4 +1,6 @@
 <script lang="ts" setup>
+import { t } from '../i18n';
+
 defineProps<{
   title: string;
   message: string;
@@ -17,8 +19,8 @@ const emit = defineEmits(['confirm', 'cancel']);
         <h2 class="modal-title">{{ title }}</h2>
         <p class="modal-message">{{ message }}</p>
         <div class="modal-actions">
-          <button class="btn tonal" @click="emit('cancel')">{{ cancelText || 'Cancel' }}</button>
-          <button class="btn primary" :style="danger ? 'background: var(--md-error);' : ''" @click="emit('confirm')">{{ confirmText || 'Confirm' }}</button>
+          <button class="btn tonal" @click="emit('cancel')">{{ cancelText || t('common.cancel') }}</button>
+          <button class="btn primary" :style="danger ? 'background: var(--md-error);' : ''" @click="emit('confirm')">{{ confirmText || t('common.confirm') }}</button>
         </div>
       </div>
     </div>

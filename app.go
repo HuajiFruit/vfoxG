@@ -20,7 +20,9 @@ import (
 
 // App struct
 type App struct {
-	ctx context.Context
+	ctx      context.Context
+	homeMu   sync.RWMutex
+	vfoxHome string
 }
 
 // NewApp creates a new App application struct
@@ -32,6 +34,12 @@ func NewApp() *App {
 // so we can call the runtime methods
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if err := a.loadVfoxHomeSetting(); err != nil {
+		a.emitEvent("vfox-log", "[ERROR] "+err.Error())
+	}
+	if err := a.ensureVfoxHomeDir(); err != nil {
+		a.emitEvent("vfox-log", "[ERROR] "+err.Error())
+	}
 	go a.ScanSystemSdks()
 	go a.RefreshAvailablePlugins() // 后台预热插件市场缓存
 }
@@ -40,26 +48,29 @@ func (a *App) startup(ctx context.Context) {
 // to remove any previously injected vfox sdks, ensuring `vfox` reads from .vfox.toml.
 func (a *App) getCleanedEnvForVfox() []string {
 	env := os.Environ()
-	vfoxSdksDir := filepath.Join(a.getVfoxHome(), "sdks")
+	vfoxHome := strings.TrimSpace(a.getVfoxHome())
+	vfoxSdksDir := a.getVfoxHomePath("sdks")
 	sep := string(filepath.ListSeparator) // ";" on Windows, ":" on Unix
 
-	for i, e := range env {
-		if strings.HasPrefix(strings.ToLower(e), "path=") {
-			pathVal := e[5:]
-			parts := strings.Split(pathVal, sep)
-			var clean []string
-			for _, p := range parts {
-				pTrim := strings.TrimSpace(p)
-				if pTrim == "" {
-					continue
+	if vfoxSdksDir != "" {
+		for i, e := range env {
+			if strings.HasPrefix(strings.ToLower(e), "path=") {
+				pathVal := e[5:]
+				parts := strings.Split(pathVal, sep)
+				var clean []string
+				for _, p := range parts {
+					pTrim := strings.TrimSpace(p)
+					if pTrim == "" {
+						continue
+					}
+					if isPathWithin(pTrim, vfoxSdksDir) {
+						continue
+					}
+					clean = append(clean, pTrim)
 				}
-				if strings.HasPrefix(strings.ToLower(pTrim), strings.ToLower(vfoxSdksDir)) {
-					continue
-				}
-				clean = append(clean, pTrim)
+				env[i] = "PATH=" + strings.Join(clean, sep)
+				break
 			}
-			env[i] = "PATH=" + strings.Join(clean, sep)
-			break
 		}
 	}
 	// 添加伪装变量，使用 cmd/bash 可以避免 vfox 弹出子 shell 而导致死锁
@@ -67,7 +78,34 @@ func (a *App) getCleanedEnvForVfox() []string {
 	if stdruntime.GOOS == "windows" {
 		shellName = "cmd"
 	}
-	return append(env, "__VFOX_SHELL="+shellName)
+	env = upsertEnv(env, "VFOX_HOME", vfoxHome)
+	env = upsertEnv(env, "__VFOX_SHELL", shellName)
+	return env
+}
+
+// isPathWithin reports whether path is root itself or a child of root.
+func isPathWithin(path string, root string) bool {
+	path = strings.TrimSpace(path)
+	root = strings.TrimSpace(root)
+	if path == "" || root == "" {
+		return false
+	}
+
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if stdruntime.GOOS == "windows" {
+		path = strings.ToLower(path)
+		root = strings.ToLower(root)
+	}
+	if path == root {
+		return true
+	}
+
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 // RunVfoxCommand 执行短生命周期的 vfox 命令，带 15s 超时防止前端卡死
@@ -75,7 +113,12 @@ func (a *App) RunVfoxCommand(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, filepath.Join(a.getCoreDir(), getVfoxExeName()), args...)
+	vfoxExe, err := a.getVfoxExecutable()
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.CommandContext(ctx, vfoxExe, args...)
 
 	hideWindow(cmd)
 	// 伪装为 cmd 以防止 vfox 尝试重新加载父进程（导致应用多开的严重 BUG）
@@ -102,7 +145,13 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, filepath.Join(a.getCoreDir(), getVfoxExeName()), args...)
+	vfoxExe, err := a.getVfoxExecutable()
+	if err != nil {
+		a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, vfoxExe, args...)
 	hideWindow(cmd)
 	// 自动输入 "y" 以跳过任何预料之外的交互式确认 (最多输入5次y)
 	cmd.Stdin = strings.NewReader("y\ny\ny\ny\ny\n")
@@ -110,18 +159,18 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] StdoutPipe failed: %v", err))
+		a.emitEvent("vfox-log", fmt.Sprintf("[EXIT ERROR] StdoutPipe failed: %v", err))
 		return err
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] StderrPipe failed: %v", err))
+		a.emitEvent("vfox-log", fmt.Sprintf("[EXIT ERROR] StderrPipe failed: %v", err))
 		return err
 	}
 
 	if err := cmd.Start(); err != nil {
-		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] cmd.Start failed: %v", err))
+		a.emitEvent("vfox-log", fmt.Sprintf("[EXIT ERROR] cmd.Start failed: %v", err))
 		return err
 	}
 
@@ -153,10 +202,10 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 				continue
 			}
 			cleanLine := ansiRegex.ReplaceAllString(line, "")
-			runtime.EventsEmit(a.ctx, "vfox-log", cleanLine)
+			a.emitEvent("vfox-log", cleanLine)
 		}
 		if err := scanner.Err(); err != nil && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vfox-log", "[STDOUT READ ERROR] "+err.Error())
+			a.emitEvent("vfox-log", "[STDOUT READ ERROR] "+err.Error())
 		}
 	}()
 
@@ -174,25 +223,259 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 				continue
 			}
 			cleanLine := ansiRegex.ReplaceAllString(line, "")
-			runtime.EventsEmit(a.ctx, "vfox-log", "[ERROR] "+cleanLine)
+			a.emitEvent("vfox-log", "[ERROR] "+cleanLine)
 		}
 		if err := scanner.Err(); err != nil && a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vfox-log", "[STDERR READ ERROR] "+err.Error())
+			a.emitEvent("vfox-log", "[STDERR READ ERROR] "+err.Error())
 		}
 	}()
 
 	err = cmd.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
-		runtime.EventsEmit(a.ctx, "vfox-log", "[TIMEOUT] Command cancelled after 30min")
-		return err
+		a.emitEvent("vfox-log", "[TIMEOUT] Command cancelled after 30min")
+		if err != nil {
+			return fmt.Errorf("vfox %v timed out after 30min: %w", args, err)
+		}
+		return fmt.Errorf("vfox %v timed out after 30min", args)
 	}
 	if err != nil {
-		runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("[EXIT ERROR] %v", err))
+		a.emitEvent("vfox-log", fmt.Sprintf("[EXIT ERROR] %v", err))
 		return err
 	}
 
-	runtime.EventsEmit(a.ctx, "vfox-log", "[DONE]")
+	a.emitEvent("vfox-log", "[DONE]")
 	return nil
+}
+
+func (a *App) emitEvent(name string, data ...interface{}) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, name, data...)
+}
+
+func upsertEnv(env []string, key string, value string) []string {
+	prefix := key + "="
+	for i, e := range env {
+		name, _, ok := strings.Cut(e, "=")
+		if ok && envKeyEqual(name, key) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+func envKeyEqual(a string, b string) bool {
+	if stdruntime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func (a *App) appConfigFile() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil || home == "" {
+			if err != nil {
+				return "", err
+			}
+			return "", fmt.Errorf("unable to resolve user config directory")
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "vfoxG", "config.json"), nil
+}
+
+func (a *App) readAppConfig() (AppConfig, error) {
+	configFile, err := a.appConfigFile()
+	if err != nil {
+		return AppConfig{}, err
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return AppConfig{}, nil
+		}
+		return AppConfig{}, err
+	}
+	var config AppConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return AppConfig{}, err
+	}
+	return config, nil
+}
+
+func (a *App) saveAppConfig(config AppConfig) error {
+	configFile, err := a.appConfigFile()
+	if err != nil {
+		return err
+	}
+	return a.writeJSONFile(configFile, config)
+}
+
+func (a *App) loadVfoxHomeSetting() error {
+	config, err := a.readAppConfig()
+	if err != nil {
+		return err
+	}
+	path := strings.TrimSpace(config.VfoxHome)
+	if path == "" {
+		path = strings.TrimSpace(os.Getenv("VFOX_HOME"))
+	}
+	if path == "" {
+		path = a.defaultVfoxHome()
+	}
+	normalized, err := normalizeDownloadPath(path)
+	if err != nil {
+		return err
+	}
+	a.setVfoxHome(normalized)
+	return nil
+}
+
+func (a *App) setVfoxHome(path string) {
+	a.homeMu.Lock()
+	a.vfoxHome = path
+	a.homeMu.Unlock()
+}
+
+func (a *App) appInstallDir() string {
+	if exePath, err := os.Executable(); err == nil && exePath != "" {
+		exeDir := filepath.Dir(exePath)
+		if stdruntime.GOOS == "darwin" && filepath.Base(exeDir) == "MacOS" {
+			contentsDir := filepath.Dir(exeDir)
+			if filepath.Base(contentsDir) == "Contents" {
+				return filepath.Dir(filepath.Dir(contentsDir))
+			}
+		}
+		return exeDir
+	}
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		return cwd
+	}
+	return "."
+}
+
+func (a *App) defaultVfoxHome() string {
+	if path, err := defaultUserVfoxHome(); err == nil {
+		return path
+	}
+	return filepath.Join(os.TempDir(), "vfoxG", "vfox-home")
+}
+
+func defaultUserVfoxHome() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil || strings.TrimSpace(home) == "" {
+			if err != nil {
+				return "", err
+			}
+			return "", fmt.Errorf("unable to resolve user home directory")
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return normalizeDownloadPath(filepath.Join(base, "vfoxG", "vfox-home"))
+}
+
+func normalizeDownloadPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("download path cannot be empty")
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			return "", fmt.Errorf("cannot expand home directory")
+		}
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, strings.TrimLeft(path[1:], `/\`))
+		}
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
+
+func (a *App) GetDownloadPathInfo() (DownloadPathInfo, error) {
+	path := a.getVfoxHome()
+	defaultPath := a.defaultVfoxHome()
+	return DownloadPathInfo{
+		Path:        path,
+		DefaultPath: defaultPath,
+		IsDefault:   samePath(path, defaultPath),
+	}, nil
+}
+
+func (a *App) SetDownloadPath(path string) (DownloadPathInfo, error) {
+	normalized, err := normalizeDownloadPath(path)
+	if err != nil {
+		return DownloadPathInfo{}, err
+	}
+	if err := os.MkdirAll(normalized, 0755); err != nil {
+		return DownloadPathInfo{}, err
+	}
+	if err := a.saveAppConfig(AppConfig{VfoxHome: normalized}); err != nil {
+		return DownloadPathInfo{}, err
+	}
+	a.setVfoxHome(normalized)
+	a.emitEvent("vfox-log", "[INFO] VFOX_HOME="+normalized)
+	a.emitEvent("vfox-home-changed")
+	a.emitEvent("sdk-list-changed")
+	go a.RefreshAvailablePlugins()
+	go a.ScanSystemSdks()
+	return a.GetDownloadPathInfo()
+}
+
+func (a *App) ResetDownloadPath() (DownloadPathInfo, error) {
+	defaultPath := a.defaultVfoxHome()
+	if err := os.MkdirAll(defaultPath, 0755); err != nil {
+		return DownloadPathInfo{}, err
+	}
+	if err := a.saveAppConfig(AppConfig{}); err != nil {
+		return DownloadPathInfo{}, err
+	}
+	a.setVfoxHome(defaultPath)
+	a.emitEvent("vfox-log", "[INFO] VFOX_HOME="+defaultPath)
+	a.emitEvent("vfox-home-changed")
+	a.emitEvent("sdk-list-changed")
+	go a.RefreshAvailablePlugins()
+	go a.ScanSystemSdks()
+	return a.GetDownloadPathInfo()
+}
+
+func (a *App) SelectDownloadPath() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context is not ready")
+	}
+	current := a.getVfoxHome()
+	defaultDir := current
+	if info, err := os.Stat(defaultDir); err != nil || !info.IsDir() {
+		defaultDir = filepath.Dir(defaultDir)
+		if info, err := os.Stat(defaultDir); err != nil || !info.IsDir() {
+			defaultDir = a.appInstallDir()
+		}
+	}
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:                "Select SDK and plugin download directory",
+		DefaultDirectory:     defaultDir,
+		CanCreateDirectories: true,
+	})
+}
+
+func samePath(a string, b string) bool {
+	a = filepath.Clean(strings.TrimSpace(a))
+	b = filepath.Clean(strings.TrimSpace(b))
+	if stdruntime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // --- 数据结构 ---
@@ -214,6 +497,29 @@ type PluginInfo struct {
 	URL        string `json:"url"`
 }
 
+type AppConfig struct {
+	VfoxHome string `json:"vfoxHome"`
+}
+
+func customSdksToKeep(list []SdkInfo, keepPath string) ([]SdkInfo, error) {
+	keepPath = strings.TrimSpace(keepPath)
+	if keepPath == "" {
+		return nil, nil
+	}
+	for _, sdk := range list {
+		if samePath(sdk.Path, keepPath) {
+			return []SdkInfo{sdk}, nil
+		}
+	}
+	return nil, fmt.Errorf("custom SDK path is not registered: %s", keepPath)
+}
+
+type DownloadPathInfo struct {
+	Path        string `json:"path"`
+	DefaultPath string `json:"defaultPath"`
+	IsDefault   bool   `json:"isDefault"`
+}
+
 // 版本控制相关数据结构
 type SdkVersionDetail struct {
 	Version   string `json:"version"`
@@ -224,6 +530,75 @@ type SdkDetail struct {
 	Name     string             `json:"name"`
 	Current  string             `json:"current"`
 	Versions []SdkVersionDetail `json:"versions"`
+}
+
+type PlatformInfo struct {
+	OS                  string `json:"os"`
+	Name                string `json:"name"`
+	CoreOS              string `json:"coreOS"`
+	CoreArch            string `json:"coreArch"`
+	DownloadPath        string `json:"downloadPath"`
+	DefaultDownloadPath string `json:"defaultDownloadPath"`
+	VfoxPathTarget      string `json:"vfoxPathTarget"`
+	SDKPathTarget       string `json:"sdkPathTarget"`
+	ShellProfile        string `json:"shellProfile"`
+	RequiresElevation   bool   `json:"requiresElevation"`
+	RestartHint         string `json:"restartHint"`
+}
+
+func (a *App) GetPlatformInfo() PlatformInfo {
+	info := PlatformInfo{
+		OS:                  stdruntime.GOOS,
+		Name:                stdruntime.GOOS,
+		CoreOS:              coreOSName(),
+		CoreArch:            coreArchName(),
+		DownloadPath:        a.getVfoxHome(),
+		DefaultDownloadPath: a.defaultVfoxHome(),
+	}
+
+	switch stdruntime.GOOS {
+	case "windows":
+		info.Name = "Windows"
+		info.VfoxPathTarget = "User PATH"
+		info.SDKPathTarget = "Machine PATH"
+		info.ShellProfile = "Windows environment variables"
+		info.RequiresElevation = true
+		info.RestartHint = "Open a new terminal after changing PATH."
+	case "darwin":
+		info.Name = "macOS"
+		info.VfoxPathTarget = "~/.zprofile"
+		info.SDKPathTarget = "~/.zprofile"
+		info.ShellProfile = displayHomePath(".zprofile")
+		info.RestartHint = "Open a new terminal or run source ~/.zprofile."
+	case "linux":
+		info.Name = "Linux"
+		info.VfoxPathTarget = "~/.profile"
+		info.SDKPathTarget = "~/.profile"
+		info.ShellProfile = displayHomePath(".profile")
+		info.RestartHint = "Open a new terminal or run source ~/.profile."
+	default:
+		info.VfoxPathTarget = "user shell profile"
+		info.SDKPathTarget = "user shell profile"
+		info.ShellProfile = displayHomePath(".profile")
+		info.RestartHint = "Open a new terminal after changing PATH."
+	}
+
+	return info
+}
+
+func displayHomePath(elem string) string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, elem)
+	}
+	return filepath.Join("~", elem)
+}
+
+func (a *App) CheckPluginPathOverride(pluginName string) bool {
+	return a.CheckPluginWin11CompatMode(pluginName)
+}
+
+func (a *App) CheckAnyPathOverride() bool {
+	return a.CheckWin11CompatMode()
 }
 
 // GetInstalledSdks 解析 vfox ls 的输出
@@ -268,20 +643,72 @@ func (a *App) GetInstalledSdks() ([]SdkInfo, error) {
 
 // getCacheFile 获取插件缓存文件的路径
 func (a *App) getCacheFile() string {
-	return filepath.Join(a.getVfoxHome(), "gui-plugins-cache.json")
+	return a.getVfoxHomePath("gui-plugins-cache.json")
 }
 
 func (a *App) getSystemSdkCacheFile() string {
-	return filepath.Join(a.getVfoxHome(), "gui-system-sdks-cache.json")
+	return a.getVfoxHomePath("gui-system-sdks-cache.json")
 }
 
 func (a *App) getNonVfoxSdksFile() string {
-	return filepath.Join(a.getVfoxHome(), "gui-non-vfox-sdks.json")
+	return a.getVfoxHomePath("gui-non-vfox-sdks.json")
+}
+
+func (a *App) getVfoxHomePath(elem ...string) string {
+	vfoxHome := strings.TrimSpace(a.getVfoxHome())
+	if vfoxHome == "" {
+		return ""
+	}
+	parts := append([]string{vfoxHome}, elem...)
+	return filepath.Join(parts...)
+}
+
+func (a *App) ensureVfoxHomeDir() error {
+	vfoxHome := a.getVfoxHome()
+	if strings.TrimSpace(vfoxHome) == "" {
+		return fmt.Errorf("unable to resolve vfox home directory")
+	}
+	return os.MkdirAll(vfoxHome, 0755)
+}
+
+func (a *App) writeJSONFile(path string, v interface{}) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+
+func validateSDKExecutablePath(exePath string) error {
+	exePath = strings.TrimSpace(exePath)
+	if exePath == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	info, err := os.Stat(exePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("path does not exist: %s", exePath)
+		}
+		return fmt.Errorf("cannot access path %s: %w", exePath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("path must point to an executable file, got directory: %s", exePath)
+	}
+	return nil
 }
 
 // GetAddedPlugins returns all plugins that have been added by parsing the plugin directory
 func (a *App) GetAddedPlugins() ([]string, error) {
 	vfoxHome := a.getVfoxHome()
+	if strings.TrimSpace(vfoxHome) == "" {
+		return []string{}, fmt.Errorf("unable to resolve vfox home directory")
+	}
 	pluginDir := filepath.Join(vfoxHome, "plugin")
 
 	entries, err := os.ReadDir(pluginDir)
@@ -353,9 +780,7 @@ func (a *App) RefreshAvailablePlugins() ([]PluginInfo, error) {
 
 	// 写入缓存文件 (忽略写入错误，因为这只是缓存)
 	if len(plugins) > 0 {
-		if data, err := json.Marshal(plugins); err == nil {
-			_ = os.WriteFile(a.getCacheFile(), data, 0644)
-		}
+		_ = a.writeJSONFile(a.getCacheFile(), plugins)
 	}
 
 	return a.applyIsAddedStatus(plugins), nil
@@ -387,8 +812,7 @@ func (a *App) GetSdkDetail(name string) (SdkDetail, error) {
 
 	// Fallback: if vfox current fails (e.g. for custom-sys- versions), read from .vfox.toml directly
 	if currentVer == "" || strings.Contains(currentVer, "no current") {
-		tomlPath := filepath.Join(a.getVfoxHome(), ".vfox.toml")
-		if data, err := os.ReadFile(tomlPath); err == nil {
+		if data, err := os.ReadFile(a.getVfoxHomePath(".vfox.toml")); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, name+" ") || strings.HasPrefix(trimmed, name+"=") {
@@ -456,13 +880,11 @@ func (a *App) UseVersion(name, version string) (string, error) {
 		// 会导致 PATH 多出一层目录，SDK 实际上无法被找到。
 		_, err := a.RunVfoxCommand("use", "--global", name+"@"+version)
 
-		if a.ctx != nil {
-			if err != nil {
-				runtime.EventsEmit(a.ctx, "vfox-log", "[ERROR] "+err.Error())
-			}
-			runtime.EventsEmit(a.ctx, "vfox-log", "[DONE]")
-			runtime.EventsEmit(a.ctx, "sdk-list-changed")
+		if err != nil {
+			a.emitEvent("vfox-log", "[ERROR] "+err.Error())
 		}
+		a.emitEvent("vfox-log", "[DONE]")
+		a.emitEvent("sdk-list-changed")
 	}()
 	return "ok", nil
 }
@@ -491,6 +913,12 @@ func (a *App) removeJunctionIfExists(linkPath string) {
 // 1. Clear vfox's current selection via `vfox unuse`
 // 2. Create a junction/symlink at ~/.vfox/sdks/{name} -> system SDK root
 func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
+	if err := validateSDKExecutablePath(exePath); err != nil {
+		return "", err
+	}
+	if err := a.ensureVfoxHomeDir(); err != nil {
+		return "", err
+	}
 	root := a.getSdkRoot(exePath)
 
 	// 1. Clear the vfox selection so that both don't show "当前" at the same time
@@ -501,18 +929,16 @@ func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
 	}
 
 	// 2. Create junction: ~/.vfox/sdks/{name} -> system SDK root
-	sdkLinkPath := filepath.Join(a.getVfoxHome(), "sdks", name)
+	sdkLinkPath := a.getVfoxHomePath("sdks", name)
 	a.removeJunctionIfExists(sdkLinkPath)
 	if err := a.ensureJunction(sdkLinkPath, root); err != nil {
 		return "", fmt.Errorf("failed to create SDK junction: %v", err)
 	}
 
 	go func() {
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "vfox-log", fmt.Sprintf("Activating %s (system)...", name))
-			runtime.EventsEmit(a.ctx, "vfox-log", "[DONE]")
-			runtime.EventsEmit(a.ctx, "sdk-list-changed")
-		}
+		a.emitEvent("vfox-log", fmt.Sprintf("Activating %s (system)...", name))
+		a.emitEvent("vfox-log", "[DONE]")
+		a.emitEvent("sdk-list-changed")
 	}()
 
 	return "ok", nil
@@ -522,17 +948,15 @@ func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
 func (a *App) UnuseVersion(name string) (string, error) {
 	go func() {
 		// Clean up junction before unuse
-		sdkLinkPath := filepath.Join(a.getVfoxHome(), "sdks", name)
+		sdkLinkPath := a.getVfoxHomePath("sdks", name)
 		a.removeJunctionIfExists(sdkLinkPath)
 
 		_, err := a.RunVfoxCommand("unuse", "--global", name)
-		if a.ctx != nil {
-			if err != nil {
-				runtime.EventsEmit(a.ctx, "vfox-log", "[ERROR] "+err.Error())
-			}
-			runtime.EventsEmit(a.ctx, "vfox-log", "[DONE]")
-			runtime.EventsEmit(a.ctx, "sdk-list-changed")
+		if err != nil {
+			a.emitEvent("vfox-log", "[ERROR] "+err.Error())
 		}
+		a.emitEvent("vfox-log", "[DONE]")
+		a.emitEvent("sdk-list-changed")
 	}()
 	return "ok", nil
 }
@@ -544,7 +968,55 @@ func (a *App) InstallVersion(name, version string) error {
 
 // RemovePlugin 移除指定插件及其相关的 SDK 和环境变量
 func (a *App) RemovePlugin(name string) error {
+	return a.RemovePluginWithOptions(name, "")
+}
+
+// RemovePluginWithOptions removes a plugin and optionally keeps one custom SDK
+// path active as the system SDK path override.
+func (a *App) RemovePluginWithOptions(name string, keepCustomSdkPath string) (err error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
+	keepCustomSdkPath = strings.TrimSpace(keepCustomSdkPath)
+
+	m := a.GetNonVfoxSdksMap()
+	keptCustomSdks, err := customSdksToKeep(m[name], keepCustomSdkPath)
+	if err != nil {
+		return err
+	}
+	if len(keptCustomSdks) > 0 {
+		if err := validateSDKExecutablePath(keptCustomSdks[0].Path); err != nil {
+			return err
+		}
+	}
+	if len(keptCustomSdks) == 0 && a.CheckPluginPathOverride(name) {
+		if err := a.RestoreSystemPath(name); err != nil {
+			return err
+		}
+	}
+
 	// 1. 先获取该插件所有已安装的版本
+	restoreDetachedOverride := false
+	if len(keptCustomSdks) > 0 {
+		if err := a.detachPluginPathOverrideFiles(name); err != nil {
+			return err
+		}
+		restoreDetachedOverride = true
+		defer func() {
+			if err != nil && restoreDetachedOverride {
+				if restoreErr := a.HijackSystemPath(name, keptCustomSdks[0].Path); restoreErr != nil {
+					err = fmt.Errorf("%w; also failed to restore kept custom SDK path override: %v", err, restoreErr)
+				}
+			}
+		}()
+		defer func() {
+			if err == nil {
+				restoreDetachedOverride = false
+			}
+		}()
+	}
+
 	sdks, err := a.GetInstalledSdks()
 	if err == nil {
 		for _, sdk := range sdks {
@@ -565,23 +1037,34 @@ func (a *App) RemovePlugin(name string) error {
 
 	// 4. 彻底删除插件
 	err = a.RunVfoxWithProgress([]string{"remove", "-y", name})
+	if err != nil {
+		return err
+	}
 
 	// 5. Delete all associated custom SDKs (None Vfox SDKs)
-	m := a.GetNonVfoxSdksMap()
-	if _, ok := m[name]; ok {
+	if len(keptCustomSdks) > 0 {
+		m[name] = keptCustomSdks
+	} else if _, ok := m[name]; ok {
 		delete(m, name)
-		a.saveNonVfoxSdksMap(m)
+	}
+	if saveErr := a.saveNonVfoxSdksMap(m); saveErr != nil {
+		return saveErr
 	}
 
-	if err == nil {
-		// 6. 保底清理：防止因任何异常导致残留的 SDK 空目录
-		vfoxHome := a.getVfoxHome()
-		if vfoxHome != "" {
-			vfoxLinkPath := filepath.Join(vfoxHome, "sdks", name)
-			_ = os.RemoveAll(vfoxLinkPath)
+	if len(keptCustomSdks) > 0 {
+		restoreDetachedOverride = false
+		if err := a.HijackSystemPath(name, keptCustomSdks[0].Path); err != nil {
+			return err
 		}
+		a.emitEvent("sdk-list-changed")
+		return nil
 	}
-	return err
+
+	if vfoxLinkPath := a.getVfoxHomePath("sdks", name); vfoxLinkPath != "" {
+		// 6. 保底清理：防止因任何异常导致残留的 SDK 空目录
+		_ = os.RemoveAll(vfoxLinkPath)
+	}
+	return nil
 }
 
 // UninstallVersion 卸载指定版本
@@ -707,9 +1190,7 @@ func (a *App) ScanSystemSdks() {
 			systemSdkCacheMu.Lock()
 			systemSdkCache = cachedResult
 			systemSdkCacheMu.Unlock()
-			if a.ctx != nil {
-				runtime.EventsEmit(a.ctx, "system-sdks-ready")
-			}
+			a.emitEvent("system-sdks-ready")
 		}
 	}
 
@@ -718,11 +1199,17 @@ func (a *App) ScanSystemSdks() {
 	// and races with concurrent goroutines (RunVfoxCommand, RunVfoxWithProgress, etc.).
 	originalPath := os.Getenv("PATH")
 	paths := filepath.SplitList(originalPath)
+	vfoxSdksDir := a.getVfoxHomePath("sdks")
 	var cleanPaths []string
 	for _, p := range paths {
-		if !strings.Contains(strings.ToLower(p), ".vfox") {
-			cleanPaths = append(cleanPaths, p)
+		pTrim := strings.TrimSpace(p)
+		if pTrim == "" {
+			continue
 		}
+		if vfoxSdksDir != "" && isPathWithin(pTrim, vfoxSdksDir) {
+			continue
+		}
+		cleanPaths = append(cleanPaths, pTrim)
 	}
 	cleanPathStr := strings.Join(cleanPaths, string(filepath.ListSeparator))
 
@@ -771,13 +1258,9 @@ func (a *App) ScanSystemSdks() {
 	systemSdkCacheMu.Unlock()
 
 	// Write updated results to cache file
-	if data, err := json.Marshal(result); err == nil {
-		_ = os.WriteFile(cacheFile, data, 0644)
-	}
+	_ = a.writeJSONFile(cacheFile, result)
 
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "system-sdks-ready")
-	}
+	a.emitEvent("system-sdks-ready")
 }
 
 // GetNonVfoxSdksMap returns the persisted map of custom SDKs
@@ -791,10 +1274,8 @@ func (a *App) GetNonVfoxSdksMap() map[string][]SdkInfo {
 	return res
 }
 
-func (a *App) saveNonVfoxSdksMap(m map[string][]SdkInfo) {
-	if data, err := json.Marshal(m); err == nil {
-		_ = os.WriteFile(a.getNonVfoxSdksFile(), data, 0644)
-	}
+func (a *App) saveNonVfoxSdksMap(m map[string][]SdkInfo) error {
+	return a.writeJSONFile(a.getNonVfoxSdksFile(), m)
 }
 
 // GetNonVfoxSdks exposes the full non-vfox list to the frontend
@@ -823,8 +1304,11 @@ func (a *App) DetectSdkPathVersion(name string, exePath string) string {
 // AddNonVfoxSdk allows manual registration of a non-vfox SDK path
 func (a *App) AddNonVfoxSdk(name string, exePath string, version string) error {
 	exePath = strings.TrimSpace(exePath)
-	if exePath == "" {
-		return fmt.Errorf("path cannot be empty")
+	if err := validateSDKExecutablePath(exePath); err != nil {
+		return err
+	}
+	if err := a.ensureVfoxHomeDir(); err != nil {
+		return err
 	}
 
 	if version == "" {
@@ -834,7 +1318,7 @@ func (a *App) AddNonVfoxSdk(name string, exePath string, version string) error {
 	m := a.GetNonVfoxSdksMap()
 	list := m[name]
 	for _, existing := range list {
-		if existing.Path == exePath {
+		if strings.EqualFold(filepath.Clean(existing.Path), filepath.Clean(exePath)) {
 			return fmt.Errorf("path already exists")
 		}
 	}
@@ -844,8 +1328,7 @@ func (a *App) AddNonVfoxSdk(name string, exePath string, version string) error {
 		Path:     exePath,
 		Versions: []SdkVersion{{Version: version}},
 	})
-	a.saveNonVfoxSdksMap(m)
-	return nil
+	return a.saveNonVfoxSdksMap(m)
 }
 
 // RemoveNonVfoxSdk removes a custom path from the non-vfox list
@@ -860,7 +1343,7 @@ func (a *App) RemoveNonVfoxSdk(name string, exePath string) error {
 			// Only remove the sdk symlink if it currently points to the SDK being removed
 			activePath, _ := a.GetActiveCustomSdk(name)
 			if strings.EqualFold(filepath.Clean(activePath), filepath.Clean(exePath)) {
-				sdkLinkPath := filepath.Join(a.getVfoxHome(), "sdks", name)
+				sdkLinkPath := a.getVfoxHomePath("sdks", name)
 				a.removeJunctionIfExists(sdkLinkPath)
 			}
 		}
@@ -873,8 +1356,7 @@ func (a *App) RemoveNonVfoxSdk(name string, exePath string) error {
 	} else {
 		m[name] = newList
 	}
-	a.saveNonVfoxSdksMap(m)
-	return nil
+	return a.saveNonVfoxSdksMap(m)
 }
 
 func (a *App) tryGetVersion(exe string, args []string) string {
@@ -991,23 +1473,11 @@ func (a *App) GetAllSdks() ([]SdkInfo, error) {
 // Search order:
 //  1. {exe_dir}/core/           — Windows NSIS install & dev mode
 //  2. {exe_dir}/../Resources/core/ — macOS .app bundle (Contents/MacOS/../Resources/core)
-//  3. /usr/lib/vfoxg/core/      — Linux DEB/RPM system install
-//  4. {cwd}/core/               — dev fallback
+//  3. {exe_dir}/../../core/     — local `wails build` output in build/bin
+//  4. /usr/lib/vfoxg/core/      — Linux DEB/RPM system install
+//  5. {cwd}/core/               — dev fallback
 func (a *App) getCoreDir() string {
-	// Map Go runtime constants to actual core directory names
-	osName := stdruntime.GOOS
-	if osName == "darwin" {
-		osName = "macos"
-	}
-	archName := stdruntime.GOARCH
-	switch archName {
-	case "amd64":
-		archName = "x86_64"
-	case "386":
-		archName = "x86"
-	// arm64 stays as-is
-	}
-	suffix := filepath.Join(osName, archName)
+	suffix := filepath.Join(coreOSName(), coreArchName())
 
 	// Build candidate list
 	var candidates []string
@@ -1018,21 +1488,24 @@ func (a *App) getCoreDir() string {
 		candidates = append(candidates, filepath.Join(exeDir, "core"))
 		// 2. {exe_dir}/../Resources/core/ — macOS .app bundle
 		candidates = append(candidates, filepath.Join(exeDir, "..", "Resources", "core"))
+		// 3. {repo}/core/ when running a local binary from build/bin
+		candidates = append(candidates, filepath.Join(exeDir, "..", "..", "core"))
 	}
 
-	// 3. /usr/lib/vfoxg/core/ — Linux system package
+	// 4. /usr/lib/vfoxg/core/ — Linux system package
 	if stdruntime.GOOS == "linux" {
 		candidates = append(candidates, "/usr/lib/vfoxg/core")
 	}
 
-	// 4. {cwd}/core/ — dev fallback
+	// 5. {cwd}/core/ — dev fallback
 	if abs, err := filepath.Abs("core"); err == nil {
 		candidates = append(candidates, abs)
 	}
 
 	for _, c := range candidates {
 		full := filepath.Join(c, suffix)
-		if _, err := os.Stat(full); err == nil {
+		exePath := filepath.Join(full, getVfoxExeName())
+		if info, err := os.Stat(exePath); err == nil && !info.IsDir() {
 			return full
 		}
 	}
@@ -1042,10 +1515,40 @@ func (a *App) getCoreDir() string {
 	return filepath.Join(baseDir, suffix)
 }
 
-// GetActiveCustomSdk reads the junction target. If it points to an external path (not containing .vfox/cache),
-// it's a Custom SDK and returns the path.
+func (a *App) getVfoxExecutable() (string, error) {
+	exePath := filepath.Join(a.getCoreDir(), getVfoxExeName())
+	if info, err := os.Stat(exePath); err == nil && !info.IsDir() {
+		return exePath, nil
+	}
+	return "", fmt.Errorf("vfox core executable not found at %s; install or bundle core/%s/%s", exePath, coreOSName(), coreArchName())
+}
+
+func coreOSName() string {
+	osName := stdruntime.GOOS
+	if osName == "darwin" {
+		return "macos"
+	}
+	return osName
+}
+
+func coreArchName() string {
+	switch stdruntime.GOARCH {
+	case "amd64":
+		return "x86_64"
+	case "386":
+		return "x86"
+	default:
+		return stdruntime.GOARCH
+	}
+}
+
+// GetActiveCustomSdk reads the junction target. If it points outside the configured
+// VFOX_HOME, it's a Custom SDK and returns the path.
 func (a *App) GetActiveCustomSdk(name string) (string, error) {
-	sdkLinkPath := filepath.Join(a.getVfoxHome(), "sdks", name)
+	sdkLinkPath := a.getVfoxHomePath("sdks", name)
+	if sdkLinkPath == "" {
+		return "", fmt.Errorf("unable to resolve vfox home directory")
+	}
 
 	fi, err := os.Lstat(sdkLinkPath)
 	if err != nil {
@@ -1058,8 +1561,11 @@ func (a *App) GetActiveCustomSdk(name string) (string, error) {
 	if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeIrregular != 0 {
 		target, err := os.Readlink(sdkLinkPath)
 		if err == nil {
-			// If target contains .vfox/cache, it's a vfox managed SDK
-			if strings.Contains(filepath.ToSlash(target), "/.vfox/cache/") {
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(sdkLinkPath), target)
+			}
+			// Targets under VFOX_HOME are managed by vfox, not user-provided SDKs.
+			if isPathWithin(target, a.getVfoxHome()) {
 				return "", nil
 			}
 			// Try to find matching SDK path
@@ -1078,12 +1584,17 @@ func (a *App) GetActiveCustomSdk(name string) (string, error) {
 }
 
 func (a *App) getVfoxHome() string {
-	if v := os.Getenv("VFOX_HOME"); v != "" {
+	a.homeMu.RLock()
+	path := strings.TrimSpace(a.vfoxHome)
+	a.homeMu.RUnlock()
+	if path != "" {
+		return path
+	}
+	if v := strings.TrimSpace(os.Getenv("VFOX_HOME")); v != "" {
+		if normalized, err := normalizeDownloadPath(v); err == nil {
+			return normalized
+		}
 		return v
 	}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		return filepath.Join(home, ".vfox")
-	}
-	return ""
+	return a.defaultVfoxHome()
 }

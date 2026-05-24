@@ -56,10 +56,15 @@ func (a *App) CheckVfoxInPath() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	pathStr := string(out)
 	vfoxCoreDir := a.getCoreDir()
-	if strings.Contains(pathStr, vfoxCoreDir) {
-		return true, nil
+	for _, entry := range strings.Split(strings.TrimSpace(string(out)), ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.EqualFold(filepath.Clean(entry), filepath.Clean(vfoxCoreDir)) {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -69,15 +74,25 @@ func (a *App) AddVfoxToPath() error {
 	escDir := psEscape(vfoxCoreDir)
 	script := fmt.Sprintf(`
 $currentPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($currentPath -notlike '*%s*') {
-    $newPath = $currentPath
-    if (-not $newPath.EndsWith(';')) {
-        $newPath += ';'
-    }
-    $newPath += '%s'
-    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+if (-not $currentPath) {
+    $paths = @()
+} else {
+    $paths = @($currentPath -split ';' | Where-Object { $_.Trim() -ne '' })
 }
-	`, escDir, escDir)
+$target = '%s'
+$normalizedTarget = $target.Trim().TrimEnd('\')
+$exists = $false
+foreach ($p in $paths) {
+    if ([string]::Equals($p.Trim().TrimEnd('\'), $normalizedTarget, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $exists = $true
+        break
+    }
+}
+if (-not $exists) {
+    $paths += $target
+    [Environment]::SetEnvironmentVariable('Path', ($paths -join ';'), 'User')
+}
+	`, escDir)
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
 	hideWindow(cmd)
 	return cmd.Run()
@@ -88,13 +103,17 @@ func (a *App) RemoveVfoxFromPath() error {
 	escDir := psEscape(vfoxCoreDir)
 	script := fmt.Sprintf(`
 $currentPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-if ($currentPath -like '*%s*') {
-    $paths = $currentPath -split ';'
-    $newPaths = $paths | Where-Object { $_ -ne '%s' -and $_ -ne '' }
-    $newPath = $newPaths -join ';'
-    [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+if (-not $currentPath) {
+    return
 }
-	`, escDir, escDir)
+$target = '%s'
+$normalizedTarget = $target.Trim().TrimEnd('\')
+$paths = @($currentPath -split ';' | Where-Object {
+    $entry = $_.Trim()
+    $entry -ne '' -and -not [string]::Equals($entry.TrimEnd('\'), $normalizedTarget, [System.StringComparison]::OrdinalIgnoreCase)
+})
+[Environment]::SetEnvironmentVariable('Path', ($paths -join ';'), 'User')
+	`, escDir)
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
 	hideWindow(cmd)
 	return cmd.Run()
@@ -106,11 +125,18 @@ func runElevatedScriptHelper(scriptContent string, doneFile string) error {
 		return fmt.Errorf("failed to create temp script: %v", tempErr)
 	}
 	tmpScriptPath := tmpScript.Name()
-	tmpScript.Write([]byte(scriptContent))
-	tmpScript.Close()
+	if _, err := tmpScript.Write([]byte(scriptContent)); err != nil {
+		tmpScript.Close()
+		os.Remove(tmpScriptPath)
+		return fmt.Errorf("failed to write temp script: %v", err)
+	}
+	if err := tmpScript.Close(); err != nil {
+		os.Remove(tmpScriptPath)
+		return fmt.Errorf("failed to close temp script: %v", err)
+	}
 	defer os.Remove(tmpScriptPath)
 
-	psCmd := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; try { Start-Process powershell -WindowStyle Hidden -Verb RunAs -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '%s' -Wait } catch { exit 1 }`, tmpScriptPath)
+	psCmd := fmt.Sprintf(`$ErrorActionPreference = 'Stop'; try { Start-Process powershell -WindowStyle Hidden -Verb RunAs -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', '%s' -Wait } catch { exit 1 }`, psEscape(tmpScriptPath))
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", psCmd)
 	hideWindow(cmd)
 
@@ -123,77 +149,207 @@ func runElevatedScriptHelper(scriptContent string, doneFile string) error {
 	return nil
 }
 
+func tempDoneFile(prefix string, name string) string {
+	replacer := strings.NewReplacer("\\", "_", "/", "_", ":", "_", "*", "_", "?", "_", `"`, "_", "<", "_", ">", "_", "|", "_")
+	safeName := replacer.Replace(name)
+	if safeName == "" {
+		safeName = "sdk"
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("%s_%s.done", prefix, safeName))
+}
+
+func windowsSafeShimName(name string) string {
+	name = strings.TrimSpace(name)
+	replacer := strings.NewReplacer("\\", "_", "/", "_", ":", "_", "*", "_", "?", "_", `"`, "_", "<", "_", ">", "_", "|", "_")
+	name = replacer.Replace(name)
+	if name == "" {
+		return "sdk"
+	}
+	return name
+}
+
+func windowsUniqueStrings(values []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+func windowsSDKShimAliases(pluginName string) []string {
+	aliases := []string{pluginName}
+	for _, def := range systemSDKDefs {
+		if def.Name == pluginName {
+			aliases = append(aliases, def.Exe)
+			break
+		}
+	}
+
+	switch strings.ToLower(pluginName) {
+	case "python":
+		aliases = append(aliases, "python3", "pip", "pip3")
+	case "nodejs":
+		aliases = append(aliases, "npm", "npx", "corepack")
+	case "java":
+		aliases = append(aliases, "javac", "jar", "jshell", "jlink", "jpackage", "keytool")
+	case "golang":
+		aliases = append(aliases, "gofmt")
+	case "rust":
+		aliases = append(aliases, "cargo", "rustdoc", "rustup")
+	case "ruby":
+		aliases = append(aliases, "gem", "bundle", "bundler", "irb", "rake")
+	case "php":
+		aliases = append(aliases, "composer")
+	case "perl":
+		aliases = append(aliases, "cpan")
+	}
+	return windowsUniqueStrings(aliases)
+}
+
+func (a *App) windowsPathShimDir() string {
+	return a.getVfoxHomePath("path-shims")
+}
+
+func windowsShimScript(pluginName string, alias string, sdkPath string) string {
+	alias = windowsSafeShimName(alias)
+	return fmt.Sprintf(`@echo off
+setlocal
+set "SDK_ROOT=%[1]s"
+if exist "%%SDK_ROOT%%\%[2]s.exe" ("%%SDK_ROOT%%\%[2]s.exe" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\bin\%[2]s.exe" ("%%SDK_ROOT%%\bin\%[2]s.exe" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\Scripts\%[2]s.exe" ("%%SDK_ROOT%%\Scripts\%[2]s.exe" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\sbin\%[2]s.exe" ("%%SDK_ROOT%%\sbin\%[2]s.exe" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\%[2]s.cmd" (call "%%SDK_ROOT%%\%[2]s.cmd" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\bin\%[2]s.cmd" (call "%%SDK_ROOT%%\bin\%[2]s.cmd" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\Scripts\%[2]s.cmd" (call "%%SDK_ROOT%%\Scripts\%[2]s.cmd" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\%[2]s.bat" (call "%%SDK_ROOT%%\%[2]s.bat" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\bin\%[2]s.bat" (call "%%SDK_ROOT%%\bin\%[2]s.bat" %%* & exit /b %%ERRORLEVEL%%)
+if exist "%%SDK_ROOT%%\Scripts\%[2]s.bat" (call "%%SDK_ROOT%%\Scripts\%[2]s.bat" %%* & exit /b %%ERRORLEVEL%%)
+echo vfoxG: %[2]s for %[3]s is not available under %%SDK_ROOT%%. 1>&2
+exit /b 9009
+`, sdkPath, alias, pluginName)
+}
+
+func (a *App) writeWindowsSDKShims(pluginName string) ([]string, error) {
+	if strings.TrimSpace(pluginName) == "" {
+		return nil, fmt.Errorf("plugin name cannot be empty")
+	}
+	shimDir := a.windowsPathShimDir()
+	if shimDir == "" {
+		return nil, fmt.Errorf("unable to resolve shim directory")
+	}
+	if err := os.MkdirAll(shimDir, 0755); err != nil {
+		return nil, err
+	}
+	aliases := windowsSDKShimAliases(pluginName)
+	sdkPath := a.getVfoxHomePath("sdks", pluginName)
+	for _, alias := range aliases {
+		shimName := windowsSafeShimName(alias) + ".cmd"
+		shimPath := filepath.Join(shimDir, shimName)
+		if err := os.WriteFile(shimPath, []byte(windowsShimScript(pluginName, alias, sdkPath)), 0644); err != nil {
+			return nil, err
+		}
+	}
+	return aliases, nil
+}
+
+func (a *App) removeWindowsSDKShims(pluginName string, aliases []string) error {
+	shimDir := a.windowsPathShimDir()
+	if shimDir == "" {
+		return nil
+	}
+	if len(aliases) == 0 {
+		aliases = windowsSDKShimAliases(pluginName)
+	}
+	for _, alias := range aliases {
+		_ = os.Remove(filepath.Join(shimDir, windowsSafeShimName(alias)+".cmd"))
+	}
+	return nil
+}
+
 func (a *App) HijackSystemPath(name string, exePath string) error {
-	sdkDir := a.getSdkRoot(exePath)
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
-	doneFile := filepath.Join(os.TempDir(), fmt.Sprintf("vfox_hijack_%s.done", name))
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
+	if err := a.ensureVfoxHomeDir(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(exePath) != "" {
+		if err := validateSDKExecutablePath(exePath); err != nil {
+			return err
+		}
+		sdkRoot := a.getSdkRoot(exePath)
+		sdkLinkPath := a.getVfoxHomePath("sdks", name)
+		if err := a.ensureJunction(sdkLinkPath, sdkRoot); err != nil {
+			return err
+		}
+	}
+	aliases, err := a.writeWindowsSDKShims(name)
+	if err != nil {
+		return err
+	}
+
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	shimDir := a.windowsPathShimDir()
+	aliasesJSON, _ := json.Marshal(aliases)
+	doneFile := tempDoneFile("vfox_hijack", name)
 	os.Remove(doneFile)
 
 	script := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
-$sdkDir = '%s'
 $hijackFile = '%s'
 $name = '%s'
-$vfoxSdksDir = '%s'
+$shimDir = '%s'
+$aliasesJson = '%s'
 
-function Clean-Path($targetPath, $scope) {
-    $current = [Environment]::GetEnvironmentVariable('Path', $scope)
-    if (-not $current) { return @() }
-    
-    $parts = $current -split ';'
+function Normalize-Path($p) {
+    if (-not $p) { return '' }
+    return $p.Trim().TrimEnd('\')
+}
+
+function Add-MachinePathEntry($target) {
+    $current = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    if (-not $current) {
+        $parts = @()
+    } else {
+        $parts = @($current -split ';' | Where-Object { $_.Trim() -ne '' })
+    }
+    $normalizedTarget = Normalize-Path $target
     $cleaned = @()
-    $removed = @()
-    
     foreach ($p in $parts) {
-        $pTrim = $p.Trim()
-        if ($pTrim -eq '') { continue }
-        if ($pTrim.ToLower().StartsWith($sdkDir.ToLower())) {
-            $removed += $pTrim
-        } else {
-            $cleaned += $pTrim
+        if ((Normalize-Path $p).ToLower() -ne $normalizedTarget.ToLower()) {
+            $cleaned += $p.Trim()
         }
     }
-    
-    if ($scope -eq 'Machine') {
-        $vfoxPath = Join-Path $vfoxSdksDir $name
-        $vfoxScripts = Join-Path $vfoxPath 'Scripts'
-        $vfoxBin = Join-Path $vfoxPath 'bin'
-        
-        $insert = @($vfoxPath, $vfoxScripts, $vfoxBin)
-        $finalCleaned = @()
-        foreach ($p in $insert) {
-            $finalCleaned += $p
-        }
-        foreach ($p in $cleaned) {
-            $pLower = $p.ToLower()
-            if ($pLower -ne $vfoxPath.ToLower() -and $pLower -ne $vfoxScripts.ToLower() -and $pLower -ne $vfoxBin.ToLower()) {
-                $finalCleaned += $p
-            }
-        }
-        $cleaned = $finalCleaned
-    }
-    
-    if ($removed.Length -gt 0 -or $scope -eq 'Machine') {
-        $newPath = $cleaned -join ';'
-        [Environment]::SetEnvironmentVariable('Path', $newPath, $scope)
-    }
-    return $removed
+    $newPath = @($target) + $cleaned
+    [Environment]::SetEnvironmentVariable('Path', ($newPath -join ';'), 'Machine')
 }
 
-$removedUser = Clean-Path $sdkDir 'User'
-$removedMachine = Clean-Path $sdkDir 'Machine'
-
-$data = @{
-    UserPaths = @($removedUser)
-    MachinePaths = @($removedMachine)
+Add-MachinePathEntry $shimDir
+$aliases = @()
+if ($aliasesJson) {
+    $aliases = @($aliasesJson | ConvertFrom-Json)
 }
-
-$json = $data | ConvertTo-Json -Depth 10
 
 $allData = New-Object PSObject
 if (Test-Path $hijackFile) {
     $allData = Get-Content $hijackFile -Raw | ConvertFrom-Json
+}
+$data = @{
+    Version = 2
+    ShimDir = $shimDir
+    Aliases = @($aliases)
 }
 $allData | Add-Member -MemberType NoteProperty -Name $name -Value $data -Force
 $allData | ConvertTo-Json -Depth 10 | Set-Content $hijackFile
@@ -202,15 +358,36 @@ Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition '[DllImport("use
 $result = [UIntPtr]::Zero
 [Win32.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
 New-Item -Path '%s' -ItemType File -Force | Out-Null
-`, psEscape(sdkDir), psEscape(hijackFile), psEscape(name), psEscape(filepath.Join(vfoxHome, "sdks")), psEscape(doneFile))
+`, psEscape(hijackFile), psEscape(name), psEscape(shimDir), psEscape(string(aliasesJSON)), psEscape(doneFile))
 
-	return runElevatedScriptHelper(script, doneFile)
+	if err := runElevatedScriptHelper(script, doneFile); err != nil {
+		_ = a.removeWindowsSDKShims(name, aliases)
+		return err
+	}
+	return nil
 }
 
 func (a *App) RestoreSystemPath(name string) error {
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
-	doneFile := filepath.Join(os.TempDir(), fmt.Sprintf("vfox_restore_%s.done", name))
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
+	if err := a.ensureVfoxHomeDir(); err != nil {
+		return err
+	}
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	aliases := windowsSDKShimAliases(name)
+	if data, err := os.ReadFile(hijackFile); err == nil {
+		var parsed map[string]struct {
+			Aliases []string `json:"Aliases"`
+		}
+		if json.Unmarshal(data, &parsed) == nil && len(parsed[name].Aliases) > 0 {
+			aliases = parsed[name].Aliases
+		}
+	}
+	vfoxSdksDir := a.getVfoxHomePath("sdks")
+	shimDir := a.windowsPathShimDir()
+	doneFile := tempDoneFile("vfox_restore", name)
 	os.Remove(doneFile)
 
 	script := fmt.Sprintf(`
@@ -218,6 +395,7 @@ $ErrorActionPreference = 'Stop'
 $hijackFile = '%s'
 $name = '%s'
 $vfoxSdksDir = '%s'
+$shimDir = '%s'
 
 if (-not (Test-Path $hijackFile)) {
     $allData = New-Object PSObject
@@ -229,52 +407,90 @@ if ($null -ne $allData -and $null -ne $allData.PSObject.Properties[$name]) {
     $data = $allData.PSObject.Properties[$name].Value
 }
 
-function Restore-Path($paths, $scope) {
-    if ((-not $paths -or $paths.Count -eq 0) -and $scope -ne 'Machine') { return }
-    $current = [Environment]::GetEnvironmentVariable('Path', $scope)
-    if (-not $current) { $current = '' }
-    $parts = $current -split ';'
-    $cleaned = @()
-    $vfoxPath = Join-Path $vfoxSdksDir $name
-    $vfoxScripts = Join-Path $vfoxPath 'Scripts'
-    $vfoxBin = Join-Path $vfoxPath 'bin'
-
-    foreach ($p in $parts) {
-        $pTrim = $p.Trim()
-        if ($pTrim -eq '') { continue }
-        if ($scope -eq 'Machine') {
-            $pLower = $pTrim.ToLower()
-            if ($pLower -eq $vfoxPath.ToLower() -or $pLower -eq $vfoxScripts.ToLower() -or $pLower -eq $vfoxBin.ToLower()) {
-                continue
-            }
-        }
-        $cleaned += $pTrim
-    }
-
-    $newPath = $cleaned -join ';'
-    if ($paths) {
-        foreach ($p in $paths) {
-            if (-not ($newPath.ToLower().Contains($p.ToLower()))) {
-                if ($newPath.Length -gt 0 -and -not $newPath.EndsWith(';')) {
-                    $newPath = $p + ';' + $newPath
-                } else {
-                    $newPath = $p + ';' + $newPath
-                }
-            }
-        }
-    }
-    [Environment]::SetEnvironmentVariable('Path', $newPath, $scope)
+function Normalize-Path($p) {
+    if (-not $p) { return '' }
+    return $p.Trim().TrimEnd('\')
 }
 
+function Restore-Paths($paths, $scope) {
+    if (-not $paths -or $paths.Count -eq 0) { return }
+    $current = [Environment]::GetEnvironmentVariable('Path', $scope)
+    if (-not $current) { $current = '' }
+    $parts = @($current -split ';' | Where-Object { $_.Trim() -ne '' })
+    $newParts = @($parts)
+    foreach ($p in $paths) {
+        $pTrim = $p.Trim()
+        if ($pTrim -eq '') { continue }
+        $exists = $false
+        foreach ($existing in $newParts) {
+            if ((Normalize-Path $existing).ToLower() -eq (Normalize-Path $pTrim).ToLower()) {
+                $exists = $true
+                break
+            }
+        }
+        if (-not $exists) {
+            $newParts = @($pTrim) + $newParts
+        }
+    }
+    [Environment]::SetEnvironmentVariable('Path', ($newParts -join ';'), $scope)
+}
+
+function Remove-MachinePathEntries($paths) {
+    $current = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    if (-not $current) { return }
+    $removeSet = @{}
+    foreach ($p in $paths) {
+        $normalized = (Normalize-Path $p).ToLower()
+        if ($normalized -ne '') {
+            $removeSet[$normalized] = $true
+        }
+    }
+    $parts = @($current -split ';' | Where-Object { $_.Trim() -ne '' })
+    $cleaned = @()
+    foreach ($p in $parts) {
+        $normalized = (Normalize-Path $p).ToLower()
+        if (-not $removeSet.ContainsKey($normalized)) {
+            $cleaned += $p.Trim()
+        }
+    }
+    [Environment]::SetEnvironmentVariable('Path', ($cleaned -join ';'), 'Machine')
+}
+
+function Managed-PluginCount($obj) {
+    if ($null -eq $obj) { return 0 }
+    return @($obj.PSObject.Properties).Count
+}
+
+$legacyUserPaths = @()
+$legacyMachinePaths = @()
 if ($data) {
-    Restore-Path $data.UserPaths 'User'
-    Restore-Path $data.MachinePaths 'Machine'
-} else {
-    Restore-Path $null 'Machine'
+    if ($null -ne $data.PSObject.Properties['UserPaths']) {
+        $legacyUserPaths = @($data.UserPaths)
+    }
+    if ($null -ne $data.PSObject.Properties['MachinePaths']) {
+        $legacyMachinePaths = @($data.MachinePaths)
+    }
 }
 
 if ($null -ne $allData.PSObject.Properties[$name]) {
     $allData.PSObject.Properties.Remove($name)
+}
+
+$vfoxPath = Join-Path $vfoxSdksDir $name
+$legacyManagedPaths = @($vfoxPath, (Join-Path $vfoxPath 'Scripts'), (Join-Path $vfoxPath 'bin'))
+if (Managed-PluginCount $allData -eq 0) {
+    $legacyManagedPaths += $shimDir
+}
+Remove-MachinePathEntries $legacyManagedPaths
+
+Restore-Paths $legacyUserPaths 'User'
+Restore-Paths $legacyMachinePaths 'Machine'
+
+if (Managed-PluginCount $allData -eq 0) {
+    if (Test-Path $hijackFile) {
+        Remove-Item $hijackFile -Force
+    }
+} else {
     $allData | ConvertTo-Json -Depth 10 | Set-Content $hijackFile
 }
 
@@ -282,9 +498,41 @@ Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition '[DllImport("use
 $result = [UIntPtr]::Zero
 [Win32.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
 New-Item -Path '%s' -ItemType File -Force | Out-Null
-`, psEscape(hijackFile), psEscape(name), psEscape(filepath.Join(vfoxHome, "sdks")), psEscape(doneFile))
+`, psEscape(hijackFile), psEscape(name), psEscape(vfoxSdksDir), psEscape(shimDir), psEscape(doneFile))
 
-	return runElevatedScriptHelper(script, doneFile)
+	if err := runElevatedScriptHelper(script, doneFile); err != nil {
+		return err
+	}
+
+	return a.removeWindowsSDKShims(name, aliases)
+}
+
+func (a *App) detachPluginPathOverrideFiles(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
+
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	aliases := windowsSDKShimAliases(name)
+	if data, err := os.ReadFile(hijackFile); err == nil {
+		var parsed map[string]struct {
+			Aliases []string `json:"Aliases"`
+		}
+		if json.Unmarshal(data, &parsed) == nil && len(parsed[name].Aliases) > 0 {
+			aliases = parsed[name].Aliases
+		}
+	}
+
+	if err := a.removeWindowsSDKShims(name, aliases); err != nil {
+		return err
+	}
+	sdkLinkPath := a.getVfoxHomePath("sdks", name)
+	if sdkLinkPath == "" {
+		return fmt.Errorf("unable to resolve vfox home directory")
+	}
+	a.removeJunctionIfExists(sdkLinkPath)
+	return nil
 }
 
 func (a *App) HijackPluginSystemPath(pluginName string) error {
@@ -292,7 +540,7 @@ func (a *App) HijackPluginSystemPath(pluginName string) error {
 	if list, ok := m[pluginName]; ok && len(list) > 0 {
 		return a.HijackSystemPath(pluginName, list[0].Path)
 	}
-	return a.HijackSystemPath(pluginName, "C:\\VFOX_DUMMY_NEVER_MATCH\\fake.exe")
+	return a.HijackSystemPath(pluginName, "")
 }
 
 func (a *App) RestorePluginSystemPath(pluginName string) error {
@@ -300,8 +548,10 @@ func (a *App) RestorePluginSystemPath(pluginName string) error {
 }
 
 func (a *App) CheckPluginWin11CompatMode(pluginName string) bool {
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	if hijackFile == "" {
+		return false
+	}
 	if _, err := os.Stat(hijackFile); err == nil {
 		data, err := os.ReadFile(hijackFile)
 		if err == nil {
@@ -316,8 +566,10 @@ func (a *App) CheckPluginWin11CompatMode(pluginName string) bool {
 }
 
 func (a *App) CheckWin11CompatMode() bool {
-	vfoxHome := a.getVfoxHome()
-	hijackFile := filepath.Join(vfoxHome, "hijacked_paths.json")
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	if hijackFile == "" {
+		return false
+	}
 	if _, err := os.Stat(hijackFile); err == nil {
 		data, err := os.ReadFile(hijackFile)
 		if err == nil {

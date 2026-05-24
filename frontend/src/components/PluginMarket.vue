@@ -1,7 +1,7 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted } from 'vue';
-import { GetAvailablePlugins, RefreshAvailablePlugins, RunVfoxWithProgress, SearchVersions, GetSdkDetail, InstallVersion, RemovePlugin, GetAddedPlugins, ScanSystemSdks, GetCachedSystemSdks, DetectSdkPathVersion, AddNonVfoxSdk, UseCustomSdk, HijackSystemPath, RestoreSystemPath, GetNonVfoxSdks } from '../../wailsjs/go/main/App';
-import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { GetAvailablePlugins, RefreshAvailablePlugins, RunVfoxWithProgress, SearchVersions, GetSdkDetail, InstallVersion, RemovePluginWithOptions, GetAddedPlugins, ScanSystemSdks, GetCachedSystemSdks, DetectSdkPathVersion, AddNonVfoxSdk, UseCustomSdk, HijackSystemPath, GetNonVfoxSdks } from '../../wailsjs/go/main/App';
+import { BrowserOpenURL, EventsOn } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
 import PluginIcon from './PluginIcon.vue';
 import RemovePluginModal from './RemovePluginModal.vue';
@@ -27,8 +27,19 @@ const availableVersions = ref<string[]>([]);
 const installedVersions = ref<Set<string>>(new Set());
 const loadingVersions = ref(false);
 const installingVersion = ref<string | null>(null);
+let offVfoxHomeChanged: (() => void) | null = null;
 
-const emit = defineEmits(['start-task']);
+const emit = defineEmits(['start-task', 'notify']);
+
+const getErrorMessage = (err: unknown, fallback: string) => {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err.trim()) return err;
+  return fallback;
+};
+
+const notifyError = (message: string, title = t('common.error')) => {
+  emit('notify', { type: 'error', title, message });
+};
 
 const fetchPlugins = async () => {
   if (plugins.value.length === 0) {
@@ -63,7 +74,9 @@ const fetchPlugins = async () => {
           selectedPlugin.value = updated;
         }
       }
-    }).catch(e => console.error(e));
+    }).catch(e => {
+      notifyError(getErrorMessage(e, t('market.refresh_error')));
+    });
     
     // Update selectedPlugin if we are in detail view
     if (selectedPlugin.value) {
@@ -73,14 +86,18 @@ const fetchPlugins = async () => {
       }
     }
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('market.load_error')));
   } finally {
     loading.value = false;
   }
 };
 
-const openUrl = (url: string) => {
-  BrowserOpenURL(url);
+const openUrl = async (url: string) => {
+  try {
+    await BrowserOpenURL(url);
+  } catch (err) {
+    notifyError(getErrorMessage(err, t('market.open_error')));
+  }
 };
 
 const fetchPluginVersions = async (name: string) => {
@@ -102,7 +119,7 @@ const fetchPluginVersions = async (name: string) => {
       // SDK might not have any installed versions, that's fine
     }
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('market.versions_error', { name })));
   } finally {
     loadingVersions.value = false;
   }
@@ -129,7 +146,7 @@ const closeDetail = () => {
 };
 
 const addPlugin = async (name: string) => {
-  emit('start-task', `Adding plugin: ${name}`);
+  emit('start-task', t('task.plugin.add', { name }));
   addingPlugin.value = name;
   try {
     await RunVfoxWithProgress(['add', name]);
@@ -147,7 +164,7 @@ const addPlugin = async (name: string) => {
         await HijackSystemPath(name, matchingSdk.path);
       }
     } catch (e) {
-      console.error("Failed to auto-add system SDK:", e);
+      notifyError(getErrorMessage(e, t('market.add_auto_link_error', { name })));
     }
 
     ScanSystemSdks(); // Update system SDK cache in background
@@ -156,7 +173,7 @@ const addPlugin = async (name: string) => {
       await fetchPluginVersions(name);
     }
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('market.add_error', { name })));
   } finally {
     if (addingPlugin.value === name) {
       addingPlugin.value = null;
@@ -176,8 +193,9 @@ const requestRemovePlugin = async (name: string) => {
       path: s.path || s.Path || '',
       version: s.versions?.[0]?.version || s.version || s.Version || 'unknown',
     }));
-  } catch {
+  } catch (err) {
     confirmRemoveCustomSdks.value = [];
+    notifyError(getErrorMessage(err, t('market.custom_refs_error', { name })));
   }
   confirmRemove.value = name;
 };
@@ -187,34 +205,27 @@ const executeRemovePlugin = async (chosenPath: string | null) => {
   const name = confirmRemove.value;
   confirmRemove.value = null;
   
-  emit('start-task', `Removing plugin: ${name}`);
+  emit('start-task', t('task.plugin.remove', { name }));
   removingPlugin.value = name;
   try {
-    if (chosenPath) {
-      // User chose to keep a specific SDK: restore its path to system PATH
-      await RestoreSystemPath(name);
-    } else {
-      // Clean removal: don't restore anything
-      // Just proceed without calling RestoreSystemPath
-    }
-    await RemovePlugin(name);
+    await RemovePluginWithOptions(name, chosenPath || '');
     await fetchPlugins();
     ScanSystemSdks();
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('market.remove_error', { name })));
   } finally {
     removingPlugin.value = null;
   }
 };
 
 const installVersion = async (pluginName: string, version: string) => {
-  emit('start-task', `Installing ${pluginName}@${version}`);
+  emit('start-task', t('task.version.install', { name: pluginName, version }));
   installingVersion.value = version;
   try {
     await InstallVersion(pluginName, version);
     installedVersions.value.add(version);
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('market.install_error', { name: pluginName, version })));
   } finally {
     if (installingVersion.value === version) {
       installingVersion.value = null;
@@ -224,6 +235,20 @@ const installVersion = async (pluginName: string, version: string) => {
 
 onMounted(() => {
   fetchPlugins();
+  offVfoxHomeChanged = EventsOn('vfox-home-changed', () => {
+    selectedPlugin.value = null;
+    availableVersions.value = [];
+    installedVersions.value.clear();
+    activeView.value = 'list';
+    fetchPlugins();
+  });
+});
+
+onUnmounted(() => {
+  if (offVfoxHomeChanged) {
+    offVfoxHomeChanged();
+    offVfoxHomeChanged = null;
+  }
 });
 </script>
 
@@ -242,7 +267,7 @@ onMounted(() => {
 
         <div v-else>
           <!-- Official Plugins -->
-          <h3 class="section-heading" v-if="officialPlugins.length > 0">Official Plugins</h3>
+          <h3 class="section-heading" v-if="officialPlugins.length > 0">{{ t('market.official') }}</h3>
           <div class="sdk-grid">
             <div v-for="p in officialPlugins" :key="p.name" class="sdk-card" @click="openDetail(p)">
               <PluginIcon :name="p.name" class="sdk-icon-large" />
@@ -267,7 +292,7 @@ onMounted(() => {
           </div>
 
           <!-- Community Plugins -->
-          <h3 class="section-heading" v-if="communityPlugins.length > 0" style="margin-top: 32px; color: var(--text-secondary);">Community Plugins</h3>
+          <h3 class="section-heading" v-if="communityPlugins.length > 0" style="margin-top: 32px; color: var(--text-secondary);">{{ t('market.community') }}</h3>
           <div class="sdk-grid" v-if="communityPlugins.length > 0">
             <div v-for="p in communityPlugins" :key="p.name" class="sdk-card" @click="openDetail(p)">
               <PluginIcon :name="p.name" class="sdk-icon-large" />
@@ -331,26 +356,26 @@ onMounted(() => {
         <div class="detail-body">
           <div v-if="!selectedPlugin.isAdded" class="plugin-not-added-banner flex-center" style="flex-direction: column; padding: 60px 20px; text-align: center;">
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="1.5" style="margin-bottom: 16px;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
-            <h2 style="margin-bottom: 8px;">Plugin Not Added</h2>
+            <h2 style="margin-bottom: 8px;">{{ t('market.plugin_not_added') }}</h2>
             <p style="color: var(--text-secondary); margin-bottom: 24px; max-width: 400px;">
-              You need to add this plugin to your vfox environment before you can browse and install its available SDK versions.
+              {{ t('market.plugin_not_added.desc') }}
             </p>
             <button class="btn primary large-btn" :disabled="addingPlugin === selectedPlugin.name" @click="addPlugin(selectedPlugin.name)" style="min-width: 140px; display: flex; justify-content: center; align-items: center;">
               <div v-if="addingPlugin === selectedPlugin.name" class="spinner small-spinner" style="width: 18px; height: 18px; border-width: 2px;"></div>
-              <template v-else>+ {{ t('sdk.add') }} Plugin</template>
+              <template v-else>+ {{ t('market.add_plugin') }}</template>
             </button>
           </div>
 
           <div v-else>
             <h2>{{ t('sdk.available_versions') }}</h2>
-            <p style="color: var(--text-secondary); margin-bottom: 20px;">Select a version below to install it locally.</p>
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">{{ t('market.select_version_hint') }}</p>
 
             <div v-if="loadingVersions" class="flex-center" style="height: 200px;">
               <div class="spinner"></div>
             </div>
             
             <div v-else-if="availableVersions.length === 0" class="empty-state">
-              No versions found for this plugin.
+              {{ t('market.no_versions') }}
             </div>
 
             <div v-else class="search-results-grid">

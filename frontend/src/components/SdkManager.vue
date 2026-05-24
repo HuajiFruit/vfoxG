@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePlugin, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, RestoreSystemPath, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginWin11CompatMode, GetActiveCustomSdk } from '../../wailsjs/go/main/App';
-import { EventsOn, EventsOff, ClipboardSetText } from '../../wailsjs/runtime/runtime';
+import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePluginWithOptions, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginPathOverride, GetActiveCustomSdk, GetPlatformInfo } from '../../wailsjs/go/main/App';
+import { EventsOn, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
 import PluginIcon from './PluginIcon.vue';
 import ConfirmModal from './ConfirmModal.vue';
@@ -10,7 +10,7 @@ import { t } from '../i18n';
 
 const sdks = ref<main.SdkInfo[]>([]);
 const loading = ref(true);
-const errorMsg = ref('');
+const platformInfo = ref<main.PlatformInfo | null>(null);
 
 const searchingFor = ref<string | null>(null);
 const searchResults = ref<string[]>([]);
@@ -29,7 +29,25 @@ const usingVersion = ref<string | null>(null);
 
 const removingPlugin = ref<string | null>(null);
 
-const emit = defineEmits(['start-task']);
+const emit = defineEmits(['start-task', 'notify']);
+
+const getErrorMessage = (err: unknown, fallback: string) => {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err.trim()) return err;
+  return fallback;
+};
+
+const notifyError = (message: string, title = t('common.error')) => {
+  emit('notify', { type: 'error', title, message });
+};
+
+const notifySuccess = (message: string, title = t('common.success')) => {
+  emit('notify', { type: 'success', title, message });
+};
+
+const notifyInfo = (message: string, title = t('common.notification')) => {
+  emit('notify', { type: 'info', title, message });
+};
 
 const vfoxSdks = computed(() => sdks.value.filter(s => s.source === 'vfox'));
 const systemSdks = computed(() => sdks.value.filter(s => s.source !== 'vfox'));
@@ -102,7 +120,7 @@ const handleDetectVersion = async (name: string) => {
       customVersionInput.value = v;
     }
   } catch (err) {
-    console.error('Failed to detect version:', err);
+    notifyError(getErrorMessage(err, t('sdk.detect_error')));
   } finally {
     isDetectingVersion.value = false;
   }
@@ -119,7 +137,7 @@ const handleAddCustomPath = async (name: string) => {
     nonVfoxSdksMap.value = await GetNonVfoxSdks();
     await checkCompatMode(name);
   } catch (err: any) {
-    errorMsg.value = err.message || 'Failed to add custom path';
+    notifyError(getErrorMessage(err, t('sdk.custom.add_error')));
   } finally {
     isAddingCustomPath.value = false;
   }
@@ -131,12 +149,12 @@ const handleRemoveCustomPath = async (name: string, path: string) => {
     nonVfoxSdksMap.value = await GetNonVfoxSdks();
     await checkCompatMode(name);
   } catch (err: any) {
-    errorMsg.value = err.message || 'Failed to remove custom path';
+    notifyError(getErrorMessage(err, t('sdk.custom.remove_error')));
   }
 };
 
 const handleUseCustomPath = async (name: string, path: string) => {
-  emit('start-task', `Using ${name} (${path})`);
+  emit('start-task', t('task.custom.use', { name, path }));
   usingVersion.value = path;
   try {
     activeCustomSdk.value = path;
@@ -147,12 +165,11 @@ const handleUseCustomPath = async (name: string, path: string) => {
     }
     const result = await UseCustomSdk(name, path);
     if (result !== 'ok') {
-      errorMsg.value = 'Failed to apply custom SDK.';
+      notifyError(t('sdk.custom.apply_error'));
     }
     await checkCompatMode(name);
   } catch (e) {
-    console.error(e);
-    errorMsg.value = 'Error applying custom SDK.';
+    notifyError(getErrorMessage(e, t('sdk.custom.apply_exception')));
   } finally {
     usingVersion.value = null;
   }
@@ -171,6 +188,13 @@ const formatVersionTitle = (name: string, rawVersion: string) => {
   return rawVersion.replace(regex, '').trim();
 };
 
+const displayVersion = (version?: string) => version || t('common.unknown');
+
+const truncateVersion = (version?: string, maxLength = 30) => {
+  const text = displayVersion(version);
+  return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
+};
+
 const mergeSdkLists = (vfox: main.SdkInfo[], system: main.SdkInfo[]) => {
   const vfoxNames = new Set(vfox.map(s => s.name));
   return [...vfox, ...system.filter(s => !vfoxNames.has(s.name))];
@@ -182,18 +206,16 @@ const fetchVfoxSdks = async () => {
     const system = sdks.value.filter(s => s.source !== 'vfox');
     sdks.value = mergeSdkLists(vfox, system);
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('sdk.refresh_error')));
   }
 };
 
 const fetchAllSdks = async () => {
   loading.value = true;
-  errorMsg.value = '';
   try {
     sdks.value = await GetAllSdks();
   } catch (err) {
-    console.error(err);
-    errorMsg.value = 'Failed to load SDK list.';
+    notifyError(getErrorMessage(err, t('sdk.load_error')));
   } finally {
     loading.value = false;
   }
@@ -202,6 +224,7 @@ const fetchAllSdks = async () => {
 let systemReadyOff: (() => void) | null = null;
 
 onMounted(async () => {
+  await loadPlatformInfo();
   await fetchAllSdks();
   let mounted = true;
 
@@ -237,8 +260,8 @@ const fetchDetail = async (name: string) => {
     const detail = await GetSdkDetail(name);
     sdkDetails.value[name] = detail;
   } catch (err) {
-    console.error(err);
     detailError.value[name] = true;
+    notifyError(getErrorMessage(err, t('sdk.detail_error', { name })));
   }
 };
 
@@ -255,31 +278,62 @@ const openDetail = async (sdk: main.SdkInfo) => {
       try {
         const path = await GetVersionPath(sdk.name, v.version);
         versionPaths.value[v.version] = path;
-      } catch(e) {}
+      } catch(e) {
+        notifyError(getErrorMessage(e, t('sdk.path.load_error', { name: sdk.name, version: v.version })));
+      }
     });
   }
 
   // 拉取 non-vfox custom paths
   try {
     nonVfoxSdksMap.value = await GetNonVfoxSdks();
-  } catch(e) {}
+  } catch(e) {
+    notifyError(getErrorMessage(e, t('sdk.custom_paths.load_error')));
+  }
   
   await checkCompatMode(sdk.name);
 };
 
 const checkingCompat = ref(false);
-const isWin11CompatApplied = ref(false);
+const isPathOverrideApplied = ref(false);
 const activeCustomSdk = ref<string>('');
 const hijacking = ref(false);
 const restoring = ref(false);
 
+const pathOverrideTarget = computed(() => platformInfo.value?.sdkPathTarget || t('settings.system.path'));
+const pathOverrideAdminText = computed(() => platformInfo.value?.requiresElevation ? t('platform.admin.required') : '');
+const pathOverrideRestartHint = computed(() => {
+  const os = platformInfo.value?.os || 'default';
+  const key = `platform.restart.${os}`;
+  const value = t(key);
+  return value === key ? t('platform.restart.default') : value;
+});
+const pathOverrideTooltip = computed(() => t('sdk.path_override.tooltip', {
+  target: pathOverrideTarget.value,
+  restart: pathOverrideRestartHint.value,
+  admin: pathOverrideAdminText.value,
+}));
+const pathOverrideRemoveTooltip = computed(() => t('sdk.path_override.remove_tooltip', {
+  target: pathOverrideTarget.value,
+  restart: pathOverrideRestartHint.value,
+  admin: pathOverrideAdminText.value,
+}));
+
+const loadPlatformInfo = async () => {
+  try {
+    platformInfo.value = await GetPlatformInfo();
+  } catch (err) {
+    notifyError(getErrorMessage(err, t('settings.platform.load_error')));
+  }
+};
+
 const checkCompatMode = async (name: string) => {
   checkingCompat.value = true;
   try {
-    isWin11CompatApplied.value = await CheckPluginWin11CompatMode(name);
+    isPathOverrideApplied.value = await CheckPluginPathOverride(name);
     activeCustomSdk.value = await GetActiveCustomSdk(name);
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('sdk.path_override.check_error', { name })));
   } finally {
     checkingCompat.value = false;
   }
@@ -290,8 +344,9 @@ const handleHijackPlugin = async (name: string) => {
   try {
     await HijackPluginSystemPath(name);
     await checkCompatMode(name);
+    notifySuccess(t('sdk.path_override.enable_success', { name, restart: pathOverrideRestartHint.value }));
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('sdk.path_override.enable_error', { name })));
   } finally {
     hijacking.value = false;
   }
@@ -302,8 +357,9 @@ const handleRestorePlugin = async (name: string) => {
   try {
     await RestorePluginSystemPath(name);
     await checkCompatMode(name);
+    notifySuccess(t('sdk.path_override.disable_success', { name, restart: pathOverrideRestartHint.value }));
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('sdk.path_override.disable_error', { name })));
   } finally {
     restoring.value = false;
   }
@@ -321,7 +377,7 @@ const closeDetail = () => {
 };
 
 const handleUse = async (name: string, version: string) => {
-  emit('start-task', `Switching ${name} to ${version}`);
+  emit('start-task', t('task.version.switch', { name, version }));
   usingVersion.value = version;
   try {
     // 乐观更新：立即标记当前版本
@@ -334,15 +390,14 @@ const handleUse = async (name: string, version: string) => {
     await UseVersion(name, version);
     // UseVersion 异步执行，由 sdk-list-changed 事件触发刷新
   } catch (err) {
-    console.error(err);
-    errorMsg.value = `Failed to switch ${name} to ${version}.`;
+    notifyError(getErrorMessage(err, t('sdk.switch_error', { name, version })));
   } finally {
     usingVersion.value = null;
   }
 };
 
 const handleUnuse = async (name: string) => {
-  emit('start-task', `Unsetting ${name}`);
+  emit('start-task', t('task.version.unset', { name }));
   try {
     // 乐观更新：立即清除 current 状态
     const detail = sdkDetails.value[name];
@@ -354,13 +409,12 @@ const handleUnuse = async (name: string) => {
     await UnuseVersion(name);
     // UnuseVersion 异步执行，由 sdk-list-changed 事件触发刷新
   } catch (err) {
-    console.error(err);
-    errorMsg.value = `Failed to unset ${name}.`;
+    notifyError(getErrorMessage(err, t('sdk.unset_error', { name })));
   }
 };
 
 const handleInstall = async (name: string, version: string) => {
-  emit('start-task', `Installing ${name}@${version}`);
+  emit('start-task', t('task.version.install', { name, version }));
   try {
     await InstallVersion(name, version);
     await fetchDetail(name);
@@ -375,8 +429,7 @@ const handleInstall = async (name: string, version: string) => {
       searchingFor.value = null;
     }
   } catch (err) {
-    console.error(err);
-    errorMsg.value = `Failed to install ${name}@${version}.`;
+    notifyError(getErrorMessage(err, t('sdk.install_error', { name, version })));
   }
 };
 
@@ -396,8 +449,9 @@ const requestRemovePlugin = async (name: string) => {
       path: s.path || s.Path || '',
       version: s.versions?.[0]?.version || s.version || s.Version || 'unknown',
     }));
-  } catch {
+  } catch (err) {
     removePluginCustomSdks.value = [];
+    notifyError(getErrorMessage(err, t('market.custom_refs_error', { name })));
   }
   removePluginName.value = name;
 };
@@ -411,7 +465,7 @@ const executeConfirm = async () => {
   confirmAction.value = { type: null, name: '' };
   
   if (type === 'uninstallVersion' && version) {
-    emit('start-task', `Uninstalling ${name}@${version}`);
+    emit('start-task', t('task.version.uninstall', { name, version }));
     try {
       if (sdkDetails.value[name]?.current === version) {
         await handleUnuse(name);
@@ -421,8 +475,7 @@ const executeConfirm = async () => {
       await fetchVfoxSdks();
       delete versionPaths.value[version];
     } catch (err) {
-      console.error(err);
-      errorMsg.value = `Failed to uninstall ${name}@${version}.`;
+      notifyError(getErrorMessage(err, t('sdk.uninstall_error', { name, version })));
     }
   } else if (type === 'removeCustomSdk' && path) {
     const isCurrent = activeCustomSdk.value === path;
@@ -442,19 +495,14 @@ const executeRemovePlugin = async (chosenPath: string | null) => {
   removePluginName.value = null;
   if (!name) return;
 
-  emit('start-task', `Removing plugin: ${name}`);
+  emit('start-task', t('task.plugin.remove', { name }));
   removingPlugin.value = name;
   try {
-    await handleUnuse(name);
-    if (chosenPath) {
-      await RestoreSystemPath(name);
-    }
-    await RemovePlugin(name);
+    await RemovePluginWithOptions(name, chosenPath || '');
     await fetchAllSdks();
     closeDetail();
   } catch (err) {
-    console.error(err);
-    errorMsg.value = `Failed to remove plugin ${name}.`;
+    notifyError(getErrorMessage(err, t('sdk.remove_plugin_error', { name })));
   } finally {
     removingPlugin.value = null;
   }
@@ -470,7 +518,7 @@ const handleSearch = async (name: string) => {
       searchResults.value = results;
     }
   } catch (err) {
-    console.error(err);
+    notifyError(getErrorMessage(err, t('sdk.search_error', { name })));
     if (searchingFor.value === name) {
       searchResults.value = [];
     }
@@ -485,13 +533,18 @@ const copiedPath = ref<string | null>(null);
 
 const copyPath = async (path: string) => {
   if (path) {
-    await ClipboardSetText(path);
-    copiedPath.value = path;
-    setTimeout(() => {
-      if (copiedPath.value === path) {
-        copiedPath.value = null;
-      }
-    }, 2000);
+    try {
+      await ClipboardSetText(path);
+      copiedPath.value = path;
+      notifyInfo(t('sdk.path.copied'));
+      setTimeout(() => {
+        if (copiedPath.value === path) {
+          copiedPath.value = null;
+        }
+      }, 2000);
+    } catch (err) {
+      notifyError(getErrorMessage(err, t('sdk.path.copy_error')));
+    }
   }
 };
 
@@ -503,8 +556,6 @@ const toggleExpand = (id: string) => {
 
 <template>
   <div class="sdk-manager">
-    <div v-if="errorMsg" class="error-banner" @click="errorMsg = ''">{{ errorMsg }}</div>
-
     <!-- MAIN VIEW (LIST) -->
     <Transition :name="transitionName" mode="out-in">
       <div v-if="activeView === 'list'" key="list" class="view-container">
@@ -542,7 +593,7 @@ const toggleExpand = (id: string) => {
                 <PluginIcon :name="sdk.name" class="sdk-icon-large" />
                 <div class="sdk-card-content">
                   <h3>{{ sdk.name }}</h3>
-                  <span class="version-count" :title="sdk.versions?.[0]?.version || 'unknown'">{{ (sdk.versions?.[0]?.version || 'unknown').length > 30 ? (sdk.versions?.[0]?.version || 'unknown').substring(0, 30) + '...' : (sdk.versions?.[0]?.version || 'unknown') }}</span>
+                  <span class="version-count" :title="displayVersion(sdk.versions?.[0]?.version)">{{ truncateVersion(sdk.versions?.[0]?.version) }}</span>
                 </div>
               </div>
             </div>
@@ -577,7 +628,7 @@ const toggleExpand = (id: string) => {
                   <div class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px; border-color: var(--md-outline) transparent var(--md-outline) transparent;"></div>
                 </button>
                 <button 
-                  v-else-if="!isWin11CompatApplied" 
+                  v-else-if="!isPathOverrideApplied"
                   class="btn tonal small" 
                   @click="handleHijackPlugin(selectedSdk.name)" 
                   :disabled="hijacking || restoring" 
@@ -586,11 +637,11 @@ const toggleExpand = (id: string) => {
                   <div v-if="hijacking" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
                   <template v-else>
                     <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">security</span>
-                    {{ t('sdk.add_system_path') }}
+                    {{ t('sdk.path_override.enable') }}
                     <div class="custom-tooltip-container" style="margin-left: 6px; display: flex;">
                       <span class="material-symbols-outlined" style="font-size: 14px; color: var(--md-outline); cursor: help;">info</span>
                       <div class="custom-tooltip-content">
-                        {{ t('sdk.add_system_path.tooltip') }}
+                        {{ pathOverrideTooltip }}
                       </div>
                     </div>
                   </template>
@@ -605,16 +656,16 @@ const toggleExpand = (id: string) => {
                   <div v-if="restoring" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
                   <template v-else>
                     <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">restore</span>
-                    {{ t('sdk.remove_system_path') }}
+                    {{ t('sdk.path_override.disable') }}
                     <div class="custom-tooltip-container" style="margin-left: 6px; display: flex;">
                       <span class="material-symbols-outlined" style="font-size: 14px; color: var(--md-outline); cursor: help;">info</span>
                       <div class="custom-tooltip-content">
-                        {{ t('sdk.remove_system_path.tooltip') }}
+                        {{ pathOverrideRemoveTooltip }}
                       </div>
                     </div>
                   </template>
                 </button>
-                <span v-if="!checkingCompat && !isWin11CompatApplied" style="font-size: 11px; color: var(--md-outline); opacity: 0.8;">{{ t('sdk.add_system_path.hint') }}</span>
+                <span v-if="!checkingCompat && !isPathOverrideApplied" style="font-size: 11px; color: var(--md-outline); opacity: 0.8;">{{ t('sdk.path_override.hint') }}</span>
               </div>
 
               <button 
@@ -646,10 +697,10 @@ const toggleExpand = (id: string) => {
                   <div class="flex-align-center flex-gap-12" style="min-width: 0; flex: 1;">
                     <h3 class="version-title" :style="{ display: 'flex', alignItems: expandedVersions['sys-' + selectedSdk.path] ? 'flex-start' : 'center', flexWrap: expandedVersions['sys-' + selectedSdk.path] ? 'wrap' : 'nowrap', gap: '8px', minWidth: 0, flex: '0 1 auto' }">
                       <span :style="{ wordBreak: 'break-all', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: expandedVersions['sys-' + selectedSdk.path] ? 'normal' : 'nowrap' }">
-                        {{ selectedSdk.versions?.[0]?.version || 'unknown' }}
+                        {{ displayVersion(selectedSdk.versions?.[0]?.version) }}
                       </span>
-                      <button v-if="(selectedSdk.versions?.[0]?.version || 'unknown').length > 50" class="btn text small" style="padding: 0 4px; min-width: auto; height: 20px; line-height: 20px; flex-shrink: 0;" @click="toggleExpand('sys-' + selectedSdk.path)">
-                        {{ expandedVersions['sys-' + selectedSdk.path] ? '收起' : '展开' }}
+                      <button v-if="displayVersion(selectedSdk.versions?.[0]?.version).length > 50" class="btn text small" style="padding: 0 4px; min-width: auto; height: 20px; line-height: 20px; flex-shrink: 0;" @click="toggleExpand('sys-' + selectedSdk.path)">
+                        {{ expandedVersions['sys-' + selectedSdk.path] ? t('common.collapse') : t('common.expand') }}
                       </button>
                     </h3>
                     <span class="system-tag" style="flex-shrink: 0;">{{ t('sdk.custom') }}</span>
@@ -659,13 +710,13 @@ const toggleExpand = (id: string) => {
                   <div class="path-label">{{ t('sdk.exe_path') }}</div>
                   <div class="path-box">
                     <code class="path-text">{{ selectedSdk.path }}</code>
-                    <button class="btn icon-btn" @click="copyPath(selectedSdk.path)" title="Copy path">
+                    <button class="btn icon-btn" @click="copyPath(selectedSdk.path)" :title="t('common.copy_path')">
                       <svg v-if="copiedPath === selectedSdk.path" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--md-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
                       <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                   </div>
                   <p class="empty-state" style="margin-top: 12px; font-size: 14px; text-align: left;">
-                    To manage this SDK, install the vfox plugin from Plugin Market first.
+                    {{ t('sdk.system.manage_hint') }}
                   </p>
                 </div>
               </div>
@@ -690,7 +741,7 @@ const toggleExpand = (id: string) => {
                           {{ ver.version }}
                         </span>
                         <button v-if="ver.version.length > 50" class="btn text small" style="padding: 0 4px; min-width: auto; height: 20px; line-height: 20px; flex-shrink: 0;" @click="toggleExpand(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)">
-                          {{ expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? '收起' : '展开' }}
+                          {{ expandedVersions[(ver.isCustom ? 'sys-' + ver.path : 'vfox-' + ver.version)] ? t('common.collapse') : t('common.expand') }}
                         </button>
                       </h3>
                       <span v-if="ver.isCurrent" class="current-tag" style="flex-shrink: 0;">{{ t('sdk.current') }}</span>
@@ -708,45 +759,45 @@ const toggleExpand = (id: string) => {
                     <div class="path-label">{{ ver.isCustom ? t('sdk.exe_path') : t('sdk.install_path') }}</div>
                     <div class="path-box" v-if="ver.path">
                       <code class="path-text">{{ ver.path }}</code>
-                      <button class="btn icon-btn" @click="copyPath(ver.path)" title="Copy path">
+                      <button class="btn icon-btn" @click="copyPath(ver.path)" :title="t('common.copy_path')">
                         <svg v-if="copiedPath === ver.path" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--md-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
                         <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                       </button>
                     </div>
                     <div v-else class="path-box loading-path">
-                      <div class="spinner small"></div> Loading path...
+                      <div class="spinner small"></div> {{ t('sdk.loading_path') }}
                     </div>
                   </div>
                 </div>
               </div>
 
-              <div v-else class="empty-state">No versions installed.</div>
+              <div v-else class="empty-state">{{ t('sdk.no_versions_installed') }}</div>
 
               <!-- Install Section (vfox only) -->
-              <div v-if="selectedSdk.source === 'vfox'" class="install-section-large" style="margin-top: 24px; padding-top: 24px; border-top: 1px dashed var(--md-sys-color-outline-variant);">
+              <div v-if="selectedSdk.source === 'vfox'" class="install-section-large" style="margin-top: 24px; padding-top: 24px; border-top: 1px dashed var(--panel-border, var(--md-outline-variant));">
                 <button v-if="searchingFor !== selectedSdk.name" class="btn primary large-btn" @click="handleSearch(selectedSdk.name)">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                  Install New Version
+                  {{ t('sdk.install_new') }}
                 </button>
 
                 <div v-else class="search-box large">
                   <div class="search-header">
-                    <input v-model="searchQuery" type="text" class="search-input" placeholder="Search available versions..." autofocus />
-                    <button class="btn text" @click="searchingFor = null">Cancel</button>
+                    <input v-model="searchQuery" type="text" class="search-input" :placeholder="t('sdk.search_versions.placeholder')" autofocus />
+                    <button class="btn text" @click="searchingFor = null">{{ t('common.cancel') }}</button>
                   </div>
                   <div v-if="searchLoading" class="flex-center" style="padding: 24px;"><div class="spinner"></div></div>
                   <div v-else class="search-results-grid">
                     <button v-for="ver in filteredSearchResults" :key="ver" class="search-result-card" @click="handleInstall(selectedSdk.name, ver)">
                       {{ ver }}
-                      <span class="install-text">Install</span>
+                      <span class="install-text">{{ t('market.install') }}</span>
                     </button>
-                    <div v-if="!filteredSearchResults.length" class="empty-state" style="grid-column: 1/-1;">No matching versions found.</div>
+                    <div v-if="!filteredSearchResults.length" class="empty-state" style="grid-column: 1/-1;">{{ t('sdk.no_matching_versions') }}</div>
                   </div>
                 </div>
               </div>
 
               <!-- Add Custom Path Form -->
-              <div class="install-section-large" style="margin-top: 24px; padding-top: 24px; border-top: 1px dashed var(--md-sys-color-outline-variant);">
+              <div class="install-section-large" style="margin-top: 24px; padding-top: 24px; border-top: 1px dashed var(--panel-border, var(--md-outline-variant));">
                 <button v-if="isAddingPathMode !== selectedSdk.name" class="btn tonal small" @click="isAddingPathMode = selectedSdk.name">+ {{ t('sdk.add_custom') }}</button>
                 <div v-else class="search-box large">
                   <div class="search-header">
@@ -771,8 +822,8 @@ const toggleExpand = (id: string) => {
         v-if="confirmAction.type"
         :title="confirmAction.type === 'uninstallVersion' ? t('sdk.uninstall') : t('sdk.remove')"
         :message="confirmAction.type === 'uninstallVersion'
-          ? `${t('sdk.confirm.uninstall_version')} ${confirmAction.version} of ${confirmAction.name}?`
-          : `${t('sdk.confirm.note')} ${t('sdk.confirm.remove_custom')}?`"
+          ? t('sdk.confirm.uninstall_version_message', { name: confirmAction.name, version: confirmAction.version || '' })
+          : t('sdk.confirm.remove_custom_message', { note: t('sdk.confirm.note'), question: t('sdk.confirm.remove_custom') })"
         :danger="true"
         :confirmText="confirmAction.type === 'uninstallVersion' ? t('sdk.uninstall') : t('sdk.remove_reference')"
         @confirm="executeConfirm"

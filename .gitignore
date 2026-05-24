@@ -10,11 +10,14 @@ core/
 
 # Dependencies
 node_modules/
-frontend/dist/
+frontend/dist/*
+!frontend/dist/.gitkeep
 frontend/package.json.md5
 
-# Wails generated bindings (auto-regenerated on build)
-frontend/wailsjs/
+# Wails generated bindings. Keep them in the repo so standalone
+# frontend type-check/build works on a fresh clone.
+!frontend/wailsjs/
+!frontend/wailsjs/**
 
 # IDE
 .idea/
