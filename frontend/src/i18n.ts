@@ -19,7 +19,7 @@ type TranslationDict = Record<string, string>;
 const en: TranslationDict = {
   // Navigation
   'nav.installed': 'Installed',
-  'nav.display': 'Display',
+  'nav.display': 'Installed',
   'nav.sync': 'Import / Export',
   'nav.market': 'Plugin Market',
   'nav.settings': 'Settings',
@@ -239,7 +239,7 @@ const en: TranslationDict = {
 const zh: TranslationDict = {
   // Navigation
   'nav.installed': '已安装',
-  'nav.display': '展示',
+  'nav.display': '已安装',
   'nav.sync': '导入/导出',
   'nav.market': '插件市场',
   'nav.settings': '设置',
