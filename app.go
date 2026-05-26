@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -476,20 +477,184 @@ func normalizeDownloadPath(path string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
+var vfoxHomeMigrationEntries = []string{
+	".vfox.toml",
+	"cache",
+	"plugin",
+	"sdks",
+}
+
+func hasMigratableVfoxHomeData(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, nil
+	}
+	for _, entry := range vfoxHomeMigrationEntries {
+		entryPath := filepath.Join(path, entry)
+		info, err := os.Lstat(entryPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return false, err
+		}
+		if info.IsDir() {
+			if hasDirectoryEntries(entryPath) {
+				return true, nil
+			}
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func hasDirectoryEntries(path string) bool {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return true
+	}
+	return len(entries) > 0
+}
+
+func (a *App) migrateVfoxHomeData(from string, to string) error {
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	if from == "" || to == "" || samePath(from, to) {
+		return nil
+	}
+	if isPathWithin(to, from) {
+		return fmt.Errorf("new download path cannot be inside the current vfox data directory")
+	}
+	if err := os.MkdirAll(to, 0755); err != nil {
+		return err
+	}
+	for _, entry := range vfoxHomeMigrationEntries {
+		src := filepath.Join(from, entry)
+		if _, err := os.Lstat(src); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if err := a.copyPathNoOverwrite(src, filepath.Join(to, entry), from, to); err != nil {
+			return fmt.Errorf("failed to migrate %s: %w", entry, err)
+		}
+	}
+	a.emitEvent("vfox-log", "[INFO] Migrated vfox SDK data to "+to)
+	return nil
+}
+
+func (a *App) copyPathNoOverwrite(src string, dst string, oldRoot string, newRoot string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return fmt.Errorf("destination already exists: %s", dst)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeIrregular != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(src), target)
+		}
+		target = filepath.Clean(target)
+		if isPathWithin(target, oldRoot) {
+			rel, err := filepath.Rel(oldRoot, target)
+			if err != nil {
+				return err
+			}
+			target = filepath.Join(newRoot, rel)
+		}
+		return a.ensureJunction(dst, target)
+	}
+	if info.IsDir() {
+		return a.copyDirNoOverwrite(src, dst, info.Mode().Perm(), oldRoot, newRoot)
+	}
+	return copyFileNoOverwrite(src, dst, info.Mode().Perm())
+}
+
+func (a *App) copyDirNoOverwrite(src string, dst string, perm os.FileMode, oldRoot string, newRoot string) error {
+	if err := os.MkdirAll(dst, perm); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := a.copyPathNoOverwrite(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), oldRoot, newRoot); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dst, perm)
+}
+
+func copyFileNoOverwrite(src string, dst string, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		_ = os.Remove(dst)
+		return copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(dst)
+		return closeErr
+	}
+	return nil
+}
+
 func (a *App) GetDownloadPathInfo() (DownloadPathInfo, error) {
 	path := a.getVfoxHome()
 	defaultPath := a.defaultVfoxHome()
+	hasMigratableData, err := hasMigratableVfoxHomeData(path)
+	if err != nil {
+		return DownloadPathInfo{}, err
+	}
 	return DownloadPathInfo{
-		Path:        path,
-		DefaultPath: defaultPath,
-		IsDefault:   samePath(path, defaultPath),
+		Path:              path,
+		DefaultPath:       defaultPath,
+		IsDefault:         samePath(path, defaultPath),
+		HasMigratableData: hasMigratableData,
 	}, nil
 }
 
 func (a *App) SetDownloadPath(path string) (DownloadPathInfo, error) {
+	return a.SetDownloadPathWithMigration(path, false)
+}
+
+func (a *App) SetDownloadPathWithMigration(path string, migrateVfoxData bool) (DownloadPathInfo, error) {
 	normalized, err := normalizeDownloadPath(path)
 	if err != nil {
 		return DownloadPathInfo{}, err
+	}
+	current := a.getVfoxHome()
+	if samePath(current, normalized) {
+		return a.GetDownloadPathInfo()
+	}
+	if migrateVfoxData {
+		if err := a.migrateVfoxHomeData(current, normalized); err != nil {
+			return DownloadPathInfo{}, err
+		}
 	}
 	if err := os.MkdirAll(normalized, 0755); err != nil {
 		return DownloadPathInfo{}, err
@@ -507,7 +672,20 @@ func (a *App) SetDownloadPath(path string) (DownloadPathInfo, error) {
 }
 
 func (a *App) ResetDownloadPath() (DownloadPathInfo, error) {
+	return a.ResetDownloadPathWithMigration(false)
+}
+
+func (a *App) ResetDownloadPathWithMigration(migrateVfoxData bool) (DownloadPathInfo, error) {
 	defaultPath := a.defaultVfoxHome()
+	current := a.getVfoxHome()
+	if samePath(current, defaultPath) {
+		return a.GetDownloadPathInfo()
+	}
+	if migrateVfoxData {
+		if err := a.migrateVfoxHomeData(current, defaultPath); err != nil {
+			return DownloadPathInfo{}, err
+		}
+	}
 	if err := os.MkdirAll(defaultPath, 0755); err != nil {
 		return DownloadPathInfo{}, err
 	}
@@ -1138,9 +1316,10 @@ func customSdksToKeep(list []SdkInfo, keepPath string) ([]SdkInfo, error) {
 }
 
 type DownloadPathInfo struct {
-	Path        string `json:"path"`
-	DefaultPath string `json:"defaultPath"`
-	IsDefault   bool   `json:"isDefault"`
+	Path              string `json:"path"`
+	DefaultPath       string `json:"defaultPath"`
+	IsDefault         bool   `json:"isDefault"`
+	HasMigratableData bool   `json:"hasMigratableData"`
 }
 
 // 版本控制相关数据结构

@@ -130,6 +130,10 @@ export function ResetDownloadPath() {
   return window['go']['main']['App']['ResetDownloadPath']();
 }
 
+export function ResetDownloadPathWithMigration(arg1) {
+  return window['go']['main']['App']['ResetDownloadPathWithMigration'](arg1);
+}
+
 export function RestorePluginSystemPath(arg1) {
   return window['go']['main']['App']['RestorePluginSystemPath'](arg1);
 }
@@ -160,6 +164,10 @@ export function SelectDownloadPath() {
 
 export function SetDownloadPath(arg1) {
   return window['go']['main']['App']['SetDownloadPath'](arg1);
+}
+
+export function SetDownloadPathWithMigration(arg1, arg2) {
+  return window['go']['main']['App']['SetDownloadPathWithMigration'](arg1, arg2);
 }
 
 export function UninstallVersion(arg1, arg2) {

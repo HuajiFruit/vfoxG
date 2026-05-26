@@ -4,6 +4,7 @@ export namespace main {
 	    path: string;
 	    defaultPath: string;
 	    isDefault: boolean;
+	    hasMigratableData: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new DownloadPathInfo(source);
@@ -14,6 +15,7 @@ export namespace main {
 	        this.path = source["path"];
 	        this.defaultPath = source["defaultPath"];
 	        this.isDefault = source["isDefault"];
+	        this.hasMigratableData = source["hasMigratableData"];
 	    }
 	}
 	export class PlatformInfo {

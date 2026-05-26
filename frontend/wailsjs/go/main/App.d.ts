@@ -66,6 +66,8 @@ export function RemoveVfoxFromPath():Promise<void>;
 
 export function ResetDownloadPath():Promise<main.DownloadPathInfo>;
 
+export function ResetDownloadPathWithMigration(arg1:boolean):Promise<main.DownloadPathInfo>;
+
 export function RestorePluginSystemPath(arg1:string):Promise<void>;
 
 export function RestoreSystemPath(arg1:string):Promise<void>;
@@ -81,6 +83,8 @@ export function SearchVersions(arg1:string):Promise<Array<string>>;
 export function SelectDownloadPath():Promise<string>;
 
 export function SetDownloadPath(arg1:string):Promise<main.DownloadPathInfo>;
+
+export function SetDownloadPathWithMigration(arg1:string,arg2:boolean):Promise<main.DownloadPathInfo>;
 
 export function UninstallVersion(arg1:string,arg2:string):Promise<void>;
 

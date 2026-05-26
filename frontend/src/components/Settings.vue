@@ -7,7 +7,9 @@ import {
   GetPlatformInfo,
   GetDownloadPathInfo,
   SetDownloadPath,
+  SetDownloadPathWithMigration,
   ResetDownloadPath,
+  ResetDownloadPathWithMigration,
   SelectDownloadPath,
 } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
@@ -72,6 +74,18 @@ const syncDownloadPathInfo = (info: main.DownloadPathInfo) => {
   downloadPathInput.value = info.path;
 };
 
+const shouldAskMigration = (targetPath: string) => {
+  const currentPath = downloadPathInfo.value?.path?.trim();
+  return Boolean(
+    downloadPathInfo.value?.hasMigratableData &&
+    currentPath &&
+    targetPath.trim() &&
+    currentPath !== targetPath.trim()
+  );
+};
+
+const confirmMigration = () => window.confirm(t('settings.download.path.migrate_confirm'));
+
 const loadPlatformInfo = async () => {
   try {
     platformInfo.value = await GetPlatformInfo();
@@ -94,9 +108,13 @@ const loadDownloadPath = async () => {
 const saveDownloadPath = async () => {
   savingDownloadPath.value = true;
   try {
-    syncDownloadPathInfo(await SetDownloadPath(downloadPathInput.value));
+    const migrate = shouldAskMigration(downloadPathInput.value) ? confirmMigration() : false;
+    const info = migrate
+      ? await SetDownloadPathWithMigration(downloadPathInput.value, true)
+      : await SetDownloadPath(downloadPathInput.value);
+    syncDownloadPathInfo(info);
     await loadPlatformInfo();
-    notifySuccess(t('settings.download.path.success'));
+    notifySuccess(t(migrate ? 'settings.download.path.migrate_success' : 'settings.download.path.success'));
   } catch (err) {
     notifyError(getErrorMessage(err, t('settings.download.path.error')));
   } finally {
@@ -121,9 +139,13 @@ const chooseDownloadPath = async () => {
 const resetDownloadPath = async () => {
   resettingDownloadPath.value = true;
   try {
-    syncDownloadPathInfo(await ResetDownloadPath());
+    const migrate = shouldAskMigration(downloadPathInfo.value?.defaultPath || '') ? confirmMigration() : false;
+    const info = migrate
+      ? await ResetDownloadPathWithMigration(true)
+      : await ResetDownloadPath();
+    syncDownloadPathInfo(info);
     await loadPlatformInfo();
-    notifySuccess(t('settings.download.path.reset_success'));
+    notifySuccess(t(migrate ? 'settings.download.path.migrate_success' : 'settings.download.path.reset_success'));
   } catch (err) {
     notifyError(getErrorMessage(err, t('settings.download.path.error')));
   } finally {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -683,6 +684,118 @@ func TestDefaultUserVfoxHomeUsesUserConfigDir(t *testing.T) {
 	want := filepath.Join(configDir, "vfoxG", "vfox-home")
 	if filepath.Clean(got) != filepath.Clean(want) {
 		t.Fatalf("defaultUserVfoxHome() = %q, want %q", got, want)
+	}
+}
+
+func TestHasMigratableVfoxHomeData(t *testing.T) {
+	tmp := t.TempDir()
+	if ok, err := hasMigratableVfoxHomeData(tmp); err != nil || ok {
+		t.Fatalf("empty home migratable = %v, %v; want false, nil", ok, err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(tmp, "sdks"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := hasMigratableVfoxHomeData(tmp); err != nil || ok {
+		t.Fatalf("empty sdks dir migratable = %v, %v; want false, nil", ok, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(tmp, "sdks", "python"), []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := hasMigratableVfoxHomeData(tmp); err != nil || !ok {
+		t.Fatalf("sdk data migratable = %v, %v; want true, nil", ok, err)
+	}
+}
+
+func TestSetDownloadPathWithMigrationCopiesVfoxData(t *testing.T) {
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, "config")
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+	t.Setenv("AppData", configDir)
+
+	current := filepath.Join(tmp, "current")
+	target := filepath.Join(tmp, "target")
+	if err := os.MkdirAll(filepath.Join(current, "cache", "python"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(current, "plugin", "python"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, ".vfox.toml"), []byte("python = \"3.13.13\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "cache", "python", "version.txt"), []byte("3.13.13"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "plugin", "python", "metadata.lua"), []byte("metadata"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setVfoxHome(current)
+
+	info, err := app.SetDownloadPathWithMigration(target, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !samePath(info.Path, target) {
+		t.Fatalf("path = %q, want %q", info.Path, target)
+	}
+	if !info.HasMigratableData {
+		t.Fatal("new target should report migratable data after copy")
+	}
+
+	for _, path := range []string{
+		filepath.Join(target, ".vfox.toml"),
+		filepath.Join(target, "cache", "python", "version.txt"),
+		filepath.Join(target, "plugin", "python", "metadata.lua"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected migrated path %s: %v", path, err)
+		}
+	}
+
+	configPath := filepath.Join(configDir, "vfoxG", "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config AppConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !samePath(config.VfoxHome, target) {
+		t.Fatalf("saved VfoxHome = %q, want %q", config.VfoxHome, target)
+	}
+}
+
+func TestSetDownloadPathWithMigrationRejectsExistingDestinationEntry(t *testing.T) {
+	tmp := t.TempDir()
+	configDir := filepath.Join(tmp, "config")
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+	t.Setenv("AppData", configDir)
+
+	current := filepath.Join(tmp, "current")
+	target := filepath.Join(tmp, "target")
+	if err := os.MkdirAll(filepath.Join(current, "cache", "python"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "cache", "python", "version.txt"), []byte("3.13.13"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(target, "cache"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.setVfoxHome(current)
+
+	if _, err := app.SetDownloadPathWithMigration(target, true); err == nil {
+		t.Fatal("expected existing destination entry error")
+	}
+	if !samePath(app.getVfoxHome(), current) {
+		t.Fatalf("vfox home changed after failed migration: %s", app.getVfoxHome())
 	}
 }
 
