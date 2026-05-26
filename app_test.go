@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPluginNameRegex(t *testing.T) {
@@ -92,35 +93,36 @@ func TestParseLsOutput(t *testing.T) {
 }
 
 func TestParseLsSdkOutput(t *testing.T) {
-	// 模拟 vfox 1.0.11 ls golang 输出
-	out := "-> 1.26.3 <-- current"
-	lines := strings.Split(out, "\n")
-
-	var versions []SdkVersionDetail
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-		isCurrent := strings.HasPrefix(line, "->")
-		ver := strings.TrimPrefix(line, "-> ")
-		ver = strings.TrimSuffix(ver, " <-- current")
-		ver = strings.TrimSpace(ver)
-		if ver == "" {
-			continue
-		}
-		versions = append(versions, SdkVersionDetail{Version: ver, IsCurrent: isCurrent})
+	tests := []struct {
+		name        string
+		line        string
+		wantVersion string
+		wantCurrent bool
+		wantOK      bool
+	}{
+		{name: "ascii current marker", line: "-> 1.26.3 <-- current", wantVersion: "1.26.3", wantCurrent: true, wantOK: true},
+		{name: "unicode current marker", line: "-> 1.26.3 <— current", wantVersion: "1.26.3", wantCurrent: true, wantOK: true},
+		{name: "leading arrow only", line: "-> 1.26.3", wantVersion: "1.26.3", wantCurrent: true, wantOK: true},
+		{name: "plain version", line: "1.26.2", wantVersion: "1.26.2", wantCurrent: false, wantOK: true},
+		{name: "custom sys hidden", line: "custom-sys-python", wantOK: false},
 	}
 
-	if len(versions) != 1 {
-		t.Fatalf("expected 1 version, got %d", len(versions))
-	}
-	if !versions[0].IsCurrent {
-		t.Error("expected IsCurrent=true")
-	}
-	if versions[0].Version != "1.26.3" {
-		t.Errorf("expected '1.26.3', got %q", versions[0].Version)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotVersion, gotCurrent, gotOK := parseSdkDetailVersionLine(tt.line)
+			if gotOK != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", gotOK, tt.wantOK)
+			}
+			if !tt.wantOK {
+				return
+			}
+			if gotVersion != tt.wantVersion {
+				t.Fatalf("version = %q, want %q", gotVersion, tt.wantVersion)
+			}
+			if gotCurrent != tt.wantCurrent {
+				t.Fatalf("current = %v, want %v", gotCurrent, tt.wantCurrent)
+			}
+		})
 	}
 }
 
@@ -172,14 +174,21 @@ func TestValidateSDKExecutablePath(t *testing.T) {
 	}
 }
 
-func TestGetCleanedEnvForVfoxRemovesOnlyVfoxSdkPaths(t *testing.T) {
+func TestGetCleanedEnvForVfoxRemovesManagedSdkAndShimPaths(t *testing.T) {
 	tmp := t.TempDir()
 	app := NewApp()
 	t.Setenv("VFOX_HOME", tmp)
+	userHome := filepath.Join(tmp, "user")
+	t.Setenv("HOME", userHome)
+	t.Setenv("USERPROFILE", userHome)
 
 	vfoxSdksDir := filepath.Join(tmp, "sdks")
+	vfoxShimDir := filepath.Join(tmp, "path-shims")
+	legacySdksDir := filepath.Join(userHome, ".vfox", "sdks")
 	paths := []string{
 		filepath.Join(vfoxSdksDir, "python"),
+		vfoxShimDir,
+		filepath.Join(legacySdksDir, "python", "Scripts"),
 		filepath.Join(tmp, "sdks-other"),
 		filepath.Join(tmp, "tools"),
 	}
@@ -212,6 +221,272 @@ func TestGetCleanedEnvForVfoxRemovesOnlyVfoxSdkPaths(t *testing.T) {
 	}
 	if filepath.Clean(gotParts[1]) != filepath.Clean(filepath.Join(tmp, "tools")) {
 		t.Fatalf("unexpected second PATH entry: %q", gotParts[1])
+	}
+}
+
+func TestFilterSystemSdksDropsVfoxManagedAndErrorVersions(t *testing.T) {
+	tmp := t.TempDir()
+	app := NewApp()
+	app.setVfoxHome(filepath.Join(tmp, "vfox-home"))
+	userHome := filepath.Join(tmp, "user")
+	t.Setenv("HOME", userHome)
+	t.Setenv("USERPROFILE", userHome)
+
+	input := []SdkInfo{
+		{
+			Name:     "python",
+			Source:   "system",
+			Path:     filepath.Join(tmp, "vfox-home", "path-shims", "python.cmd"),
+			Versions: []SdkVersion{{Version: "vfoxG: python for python is not available under C:\\vfox-home\\sdks\\python."}},
+		},
+		{
+			Name:     "python",
+			Source:   "system",
+			Path:     filepath.Join(userHome, ".vfox", "sdks", "python", "python.exe"),
+			Versions: []SdkVersion{{Version: "3.14.4"}},
+		},
+		{
+			Name:     "python",
+			Source:   "system",
+			Path:     filepath.Join(tmp, "WindowsApps", "python.exe"),
+			Versions: []SdkVersion{{Version: "Python was not found; run without arguments to install from the Microsoft Store."}},
+		},
+		{
+			Name:     "golang",
+			Source:   "system",
+			Path:     filepath.Join(tmp, "go", "bin", "go.exe"),
+			Versions: []SdkVersion{{Version: "1.26.3"}},
+		},
+	}
+
+	got := app.filterSystemSdks(input)
+	if len(got) != 1 {
+		t.Fatalf("got %d SDKs, want 1: %+v", len(got), got)
+	}
+	if got[0].Name != "golang" || got[0].Versions[0].Version != "1.26.3" {
+		t.Fatalf("unexpected SDK left after filtering: %+v", got[0])
+	}
+}
+
+func TestExtractVersionAcceptsExecutablePaths(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		exe  string
+		want string
+	}{
+		{name: "python exe path", raw: "Python 3.12.1\r\n", exe: filepath.Join("tmp", "Python312", "python.exe"), want: "3.12.1"},
+		{name: "node cmd path", raw: "v24.15.0\n", exe: filepath.Join("tmp", "tools", "node.cmd"), want: "24.15.0"},
+		{name: "unix go path", raw: "go version go1.26.3 windows/amd64\n", exe: filepath.Join("/usr", "local", "go", "bin", "go"), want: "1.26.3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractVersion(tt.raw, tt.exe); got != tt.want {
+				t.Fatalf("extractVersion() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeExecutableName(t *testing.T) {
+	tests := []struct {
+		name string
+		exe  string
+		want string
+	}{
+		{name: "python exe", exe: filepath.Join("C:", "Tools", "Python", "python.exe"), want: "python"},
+		{name: "python launcher", exe: filepath.Join("C:", "Tools", "Python", "python3w.exe"), want: "python"},
+		{name: "node cmd", exe: filepath.Join("C:", "Tools", "Node", "node.cmd"), want: "node"},
+		{name: "nodejs com", exe: filepath.Join("C:", "Tools", "Node", "nodejs.com"), want: "node"},
+		{name: "go binary", exe: filepath.Join("/usr", "local", "go", "bin", "go"), want: "go"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeExecutableName(tt.exe); got != tt.want {
+				t.Fatalf("normalizeExecutableName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsOfficialPluginStatus(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{status: "✓", want: true},
+		{status: "√", want: true},
+		{status: "yes", want: true},
+		{status: "true", want: true},
+		{status: "✗", want: false},
+		{status: "x", want: false},
+		{status: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			if got := isOfficialPluginStatus(tt.status); got != tt.want {
+				t.Fatalf("isOfficialPluginStatus(%q) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSDKApiRejectsEmptyInputs(t *testing.T) {
+	app := NewApp()
+	tmp := t.TempDir()
+	app.setVfoxHome(filepath.Join(tmp, "home"))
+
+	if _, err := app.UseVersion("", "1.0.0"); err == nil {
+		t.Fatal("UseVersion should reject empty plugin name")
+	}
+	if _, err := app.UnuseVersion(""); err == nil {
+		t.Fatal("UnuseVersion should reject empty plugin name")
+	}
+	if err := app.InstallVersion("python", ""); err == nil {
+		t.Fatal("InstallVersion should reject empty version")
+	}
+	if err := app.UninstallVersion("", "1.0.0"); err == nil {
+		t.Fatal("UninstallVersion should reject empty plugin name")
+	}
+	if _, err := app.GetVersionPath("python", ""); err == nil {
+		t.Fatal("GetVersionPath should reject empty version")
+	}
+	if _, err := app.SearchVersions(""); err == nil {
+		t.Fatal("SearchVersions should reject empty plugin name")
+	}
+	if err := app.AddNonVfoxSdk("", filepath.Join(tmp, "python"), "3.12.0"); err == nil {
+		t.Fatal("AddNonVfoxSdk should reject empty plugin name")
+	}
+	if err := app.RemoveNonVfoxSdk("python", ""); err == nil {
+		t.Fatal("RemoveNonVfoxSdk should reject empty path")
+	}
+	if _, err := app.UseCustomSdk("", filepath.Join(tmp, "python")); err == nil {
+		t.Fatal("UseCustomSdk should reject empty plugin name")
+	}
+	if got := app.DetectSdkPathVersion("", filepath.Join(tmp, "python")); got != "unknown" {
+		t.Fatalf("DetectSdkPathVersion empty name = %q, want unknown", got)
+	}
+	if _, err := app.GetActiveCustomSdk(""); err == nil {
+		t.Fatal("GetActiveCustomSdk should reject empty plugin name")
+	}
+}
+
+func TestFormatSdkEnvironmentExport(t *testing.T) {
+	generatedAt := time.Date(2026, 5, 26, 12, 30, 0, 0, time.UTC)
+	report := formatSdkEnvironmentExport(sdkEnvironmentExport{
+		GeneratedAt: generatedAt,
+		Platform: PlatformInfo{
+			OS:                  "windows",
+			Name:                "Windows",
+			CoreOS:              "windows",
+			CoreArch:            "x86_64",
+			DownloadPath:        filepath.Join("C:", "Users", "tester", "AppData", "Roaming", "vfoxG", "vfox-home"),
+			DefaultDownloadPath: filepath.Join("C:", "Users", "tester", "AppData", "Roaming", "vfoxG", "vfox-home"),
+		},
+		VfoxInPath:   true,
+		PathOverride: true,
+		VfoxSdks: []sdkEnvironmentVfoxSdk{
+			{
+				Name: "python",
+				Detail: SdkDetail{
+					Name:    "python",
+					Current: "3.14.4",
+					Versions: []SdkVersionDetail{
+						{Version: "3.14.4", IsCurrent: true},
+					},
+				},
+				VersionPaths: map[string]string{"3.14.4": filepath.Join("C:", "sdk", "python")},
+			},
+		},
+		SystemSdks: []SdkInfo{
+			{
+				Name:     "nodejs",
+				Source:   "system",
+				Path:     filepath.Join("D:", "NodeJS", "node.exe"),
+				Versions: []SdkVersion{{Version: "24.15.0"}},
+			},
+		},
+		CustomSdks: map[string][]SdkInfo{
+			"golang": {
+				{
+					Name:     "golang",
+					Source:   "system",
+					Path:     filepath.Join("D:", "go", "bin", "go.exe"),
+					Versions: []SdkVersion{{Version: "1.26.3"}},
+				},
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"vfoxG SDK Environment Export",
+		"Generated: 2026-05-26T12:30:00Z",
+		"vfox in PATH: yes",
+		"SDK PATH override active: yes",
+		"Vfox SDKs",
+		"Name | Version | Current | Path",
+		"python | 3.14.4 | yes",
+		"Custom SDKs",
+		"golang | 1.26.3",
+		"System SDKs",
+		"nodejs | 24.15.0",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestParseSdkEnvironmentImport(t *testing.T) {
+	report := strings.Join([]string{
+		"vfoxG SDK Environment Export",
+		"",
+		"Vfox SDKs",
+		"Name | Version | Current | Path",
+		"--- | --- | --- | ---",
+		"python | 3.14.4 | yes | C:\\vfox-home\\cache\\python",
+		"",
+		"Custom SDKs",
+		"Name | Version | Path",
+		"--- | --- | ---",
+		"golang | 1.26.3 | D:\\go\\bin\\go.exe",
+		"nodejs | 24.15.0 | D:\\node\\node.exe",
+		"",
+		"System SDKs",
+		"Name | Version | Executable",
+		"--- | --- | ---",
+		"git | 2.54.0 | D:\\Git\\cmd\\git.exe",
+	}, "\n")
+
+	rows, warnings := parseSdkEnvironmentImport(report)
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("got %d import rows, want 3: %+v", len(rows), rows)
+	}
+	if rows[0].Kind != "vfox" || rows[0].Name != "python" || rows[0].Version != "3.14.4" || !rows[0].Current {
+		t.Fatalf("unexpected vfox row: %+v", rows[0])
+	}
+	if rows[1].Kind != "custom" || rows[1].Name != "golang" || rows[1].Version != "1.26.3" || rows[1].Path != "D:\\go\\bin\\go.exe" {
+		t.Fatalf("unexpected custom row: %+v", rows[1])
+	}
+	if rows[2].Kind != "custom" || rows[2].Name != "nodejs" || rows[2].Path != "D:\\node\\node.exe" {
+		t.Fatalf("unexpected custom row: %+v", rows[2])
+	}
+}
+
+func TestIsUnknownSdkVersion(t *testing.T) {
+	for _, version := range []string{"", "unknown", "UNKNOWN", "(unknown)", " (unknown) "} {
+		if !isUnknownSdkVersion(version) {
+			t.Fatalf("isUnknownSdkVersion(%q) = false, want true", version)
+		}
+	}
+	if isUnknownSdkVersion("1.26.3") {
+		t.Fatal("isUnknownSdkVersion(\"1.26.3\") = true, want false")
 	}
 }
 
@@ -382,5 +657,33 @@ func TestCustomSdksToKeep(t *testing.T) {
 	_, err = customSdksToKeep(sdks, filepath.Join("tmp", "missing", "bin", "python"))
 	if err == nil {
 		t.Fatal("missing keep path should return an error")
+	}
+}
+
+func TestRemoveNonVfoxSdkUsesNormalizedPath(t *testing.T) {
+	tmp := t.TempDir()
+	app := NewApp()
+	app.setVfoxHome(filepath.Join(tmp, "home"))
+
+	exeDir := filepath.Join(tmp, "sdk", "bin")
+	if err := os.MkdirAll(exeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	exePath := filepath.Join(exeDir, "python")
+	if err := os.WriteFile(exePath, []byte("test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.AddNonVfoxSdk("python", exePath, "3.12.0"); err != nil {
+		t.Fatal(err)
+	}
+
+	equivalentPath := exeDir + string(filepath.Separator) + "." + string(filepath.Separator) + "python"
+	if err := app.RemoveNonVfoxSdk("python", equivalentPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := app.GetNonVfoxSdksMap()["python"]; len(got) != 0 {
+		t.Fatalf("custom SDK was not removed: %+v", got)
 	}
 }

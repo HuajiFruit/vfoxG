@@ -34,6 +34,7 @@ snapshot/
 
 # Temp / Debug
 *.debug.txt
+.gocache/
 scratch/
 debug_test.go
 

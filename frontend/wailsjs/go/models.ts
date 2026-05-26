@@ -162,7 +162,26 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class SdkEnvironmentImportResult {
+	    path: string;
+	    importedCustomSdks: number;
+	    skippedCustomSdks: number;
+	    vfoxSdksFound: number;
+	    warnings: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new SdkEnvironmentImportResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.importedCustomSdks = source["importedCustomSdks"];
+	        this.skippedCustomSdks = source["skippedCustomSdks"];
+	        this.vfoxSdksFound = source["vfoxSdksFound"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 	
 
 }
-

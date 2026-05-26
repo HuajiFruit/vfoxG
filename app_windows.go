@@ -583,14 +583,35 @@ func (a *App) CheckWin11CompatMode() bool {
 }
 
 func findExecutable(exe string, cleanEnv []string) string {
+	candidates := findExecutableCandidates(exe, cleanEnv)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func findExecutableCandidates(exe string, cleanEnv []string) []string {
 	lookCmd := exec.Command("cmd", "/c", "where", exe)
 	hideWindow(lookCmd)
 	lookCmd.Env = cleanEnv
 	whereOut, err := lookCmd.Output()
 	if err != nil {
-		return ""
+		return nil
 	}
-	exePath := strings.TrimSpace(strings.Split(string(whereOut), "\n")[0])
-	exePath = strings.TrimRight(exePath, "\r")
-	return exePath
+	lines := strings.Split(string(whereOut), "\n")
+	seen := make(map[string]bool)
+	var candidates []string
+	for _, line := range lines {
+		exePath := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if exePath == "" {
+			continue
+		}
+		key := strings.ToLower(filepath.Clean(exePath))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		candidates = append(candidates, exePath)
+	}
+	return candidates
 }

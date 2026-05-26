@@ -34,6 +34,10 @@ export function DetectSdkPathVersion(arg1, arg2) {
   return window['go']['main']['App']['DetectSdkPathVersion'](arg1, arg2);
 }
 
+export function ExportCurrentEnvironmentSdks() {
+  return window['go']['main']['App']['ExportCurrentEnvironmentSdks']();
+}
+
 export function GetActiveCustomSdk(arg1) {
   return window['go']['main']['App']['GetActiveCustomSdk'](arg1);
 }
@@ -92,6 +96,10 @@ export function HijackSystemPath(arg1, arg2) {
 
 export function InstallVersion(arg1, arg2) {
   return window['go']['main']['App']['InstallVersion'](arg1, arg2);
+}
+
+export function ImportSdkEnvironmentFromTxt() {
+  return window['go']['main']['App']['ImportSdkEnvironmentFromTxt']();
 }
 
 export function RefreshAvailablePlugins() {
