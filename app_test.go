@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	stdruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,136 @@ func TestParseLsSdkOutput(t *testing.T) {
 	}
 }
 
+func TestParseCurrentSdkVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{name: "plain arrow", out: "-> v3.14.4\n", want: "3.14.4"},
+		{name: "sdk arrow", out: "python -> v3.13.12\n", want: "3.13.12"},
+		{name: "sdk colon", out: "python: v3.12.10\n", want: "3.12.10"},
+		{name: "sdk at", out: "python@v3.11.9\n", want: "3.11.9"},
+		{name: "not installed", out: "python not supported, error: python not installed\n", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseCurrentSdkVersion("python", tt.out); got != tt.want {
+				t.Fatalf("parseCurrentSdkVersion() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseSdkDetailOutputUsesSingleCurrentVersion(t *testing.T) {
+	out := `-> 3.14.4 <-- current
+-> 3.13.12 <-- current`
+
+	detail := parseSdkDetailOutput("python", "3.13.12", out)
+	if detail.Current != "3.13.12" {
+		t.Fatalf("current = %q, want 3.13.12", detail.Current)
+	}
+	if len(detail.Versions) != 2 {
+		t.Fatalf("got %d versions, want 2", len(detail.Versions))
+	}
+	if detail.Versions[0].IsCurrent {
+		t.Fatal("first version should not be current")
+	}
+	if !detail.Versions[1].IsCurrent {
+		t.Fatal("second version should be current")
+	}
+}
+
+func TestParseSdkDetailOutputDropsAmbiguousCurrentMarkers(t *testing.T) {
+	out := `-> 3.14.4 <-- current
+-> 3.13.12 <-- current`
+
+	detail := parseSdkDetailOutput("python", "", out)
+	if detail.Current != "" {
+		t.Fatalf("current = %q, want empty", detail.Current)
+	}
+	for _, version := range detail.Versions {
+		if version.IsCurrent {
+			t.Fatalf("version %q should not be current", version.Version)
+		}
+	}
+}
+
+func TestParseSdkDetailOutputUsesSingleMarkerFallback(t *testing.T) {
+	out := `3.14.4
+-> 3.13.12 <-- current`
+
+	detail := parseSdkDetailOutput("python", "", out)
+	if detail.Current != "3.13.12" {
+		t.Fatalf("current = %q, want 3.13.12", detail.Current)
+	}
+	if !detail.Versions[1].IsCurrent {
+		t.Fatal("marked version should be current")
+	}
+}
+
+func TestRemoveSdkSelectionFromVfoxToml(t *testing.T) {
+	input := "# keep this\r\npython = \"3.13.12\"\r\nnodejs = \"22.0.0\"\r\npython_extra = \"keep\"\r\n"
+	got, changed := removeSdkSelectionFromVfoxToml(input, "python")
+	if !changed {
+		t.Fatal("expected config to change")
+	}
+	want := "# keep this\r\nnodejs = \"22.0.0\"\r\npython_extra = \"keep\"\r\n"
+	if got != want {
+		t.Fatalf("updated config = %q, want %q", got, want)
+	}
+}
+
+func TestRemoveSdkSelectionFromVfoxTomlNoMatch(t *testing.T) {
+	input := "nodejs = \"22.0.0\"\n"
+	got, changed := removeSdkSelectionFromVfoxToml(input, "python")
+	if changed {
+		t.Fatal("did not expect config to change")
+	}
+	if got != input {
+		t.Fatalf("updated config = %q, want original", got)
+	}
+}
+
+func TestSdkRootHasExecutableFindsNestedPython(t *testing.T) {
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "python-3.14.5")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	exeName := "python"
+	if stdruntime.GOOS == "windows" {
+		exeName = "python.exe"
+	}
+	if err := os.WriteFile(filepath.Join(root, exeName), []byte("test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !sdkRootHasExecutable(root, "python") {
+		t.Fatal("expected python executable to be detected")
+	}
+}
+
+func TestSdkRootHasExecutableFindsBinExecutable(t *testing.T) {
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	exeName := "node"
+	if stdruntime.GOOS == "windows" {
+		exeName = "node.exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, exeName), []byte("test"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !sdkRootHasExecutable(tmp, "nodejs") {
+		t.Fatal("expected node executable under bin to be detected")
+	}
+}
+
 func TestIsPathWithin(t *testing.T) {
 	root := filepath.Join("tmp", "vfox", "sdks")
 
@@ -184,11 +315,15 @@ func TestGetCleanedEnvForVfoxRemovesManagedSdkAndShimPaths(t *testing.T) {
 
 	vfoxSdksDir := filepath.Join(tmp, "sdks")
 	vfoxShimDir := filepath.Join(tmp, "path-shims")
+	vfoxCacheDir := filepath.Join(tmp, "cache")
 	legacySdksDir := filepath.Join(userHome, ".vfox", "sdks")
+	legacyCacheDir := filepath.Join(userHome, ".vfox", "cache")
 	paths := []string{
 		filepath.Join(vfoxSdksDir, "python"),
 		vfoxShimDir,
+		filepath.Join(vfoxCacheDir, "python", "v-3.14.5", "python-3.14.5"),
 		filepath.Join(legacySdksDir, "python", "Scripts"),
+		filepath.Join(legacyCacheDir, "nodejs", "v-22.0.0", "node-v22.0.0", "bin"),
 		filepath.Join(tmp, "sdks-other"),
 		filepath.Join(tmp, "tools"),
 	}
@@ -244,6 +379,12 @@ func TestFilterSystemSdksDropsVfoxManagedAndErrorVersions(t *testing.T) {
 			Source:   "system",
 			Path:     filepath.Join(userHome, ".vfox", "sdks", "python", "python.exe"),
 			Versions: []SdkVersion{{Version: "3.14.4"}},
+		},
+		{
+			Name:     "python",
+			Source:   "system",
+			Path:     filepath.Join(tmp, "vfox-home", "cache", "python", "v-3.14.5", "python-3.14.5", "python.exe"),
+			Versions: []SdkVersion{{Version: "3.14.5"}},
 		},
 		{
 			Name:     "python",

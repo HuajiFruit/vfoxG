@@ -114,6 +114,30 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class SdkEnvironmentImportResult {
+	    path: string;
+	    importedCustomSdks: number;
+	    skippedCustomSdks: number;
+	    vfoxSdksFound: number;
+	    installedVfoxSdks: number;
+	    skippedVfoxSdks: number;
+	    warnings: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new SdkEnvironmentImportResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.importedCustomSdks = source["importedCustomSdks"];
+	        this.skippedCustomSdks = source["skippedCustomSdks"];
+	        this.vfoxSdksFound = source["vfoxSdksFound"];
+	        this.installedVfoxSdks = source["installedVfoxSdks"];
+	        this.skippedVfoxSdks = source["skippedVfoxSdks"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 	export class SdkVersion {
 	    version: string;
 	
@@ -162,26 +186,4 @@ export namespace main {
 		    return a;
 		}
 	}
-	export class SdkEnvironmentImportResult {
-	    path: string;
-	    importedCustomSdks: number;
-	    skippedCustomSdks: number;
-	    vfoxSdksFound: number;
-	    warnings: string[];
-
-	    static createFrom(source: any = {}) {
-	        return new SdkEnvironmentImportResult(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.path = source["path"];
-	        this.importedCustomSdks = source["importedCustomSdks"];
-	        this.skippedCustomSdks = source["skippedCustomSdks"];
-	        this.vfoxSdksFound = source["vfoxSdksFound"];
-	        this.warnings = source["warnings"];
-	    }
-	}
-	
-
 }

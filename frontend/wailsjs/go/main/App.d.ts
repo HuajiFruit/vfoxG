@@ -48,9 +48,11 @@ export function HijackPluginSystemPath(arg1:string):Promise<void>;
 
 export function HijackSystemPath(arg1:string,arg2:string):Promise<void>;
 
+export function ImportSdkEnvironmentFromTxt():Promise<main.SdkEnvironmentImportResult>;
+
 export function InstallVersion(arg1:string,arg2:string):Promise<void>;
 
-export function ImportSdkEnvironmentFromTxt():Promise<main.SdkEnvironmentImportResult>;
+export function PreviewCurrentEnvironmentSdks():Promise<string>;
 
 export function RefreshAvailablePlugins():Promise<Array<main.PluginInfo>>;
 

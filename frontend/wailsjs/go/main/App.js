@@ -94,12 +94,16 @@ export function HijackSystemPath(arg1, arg2) {
   return window['go']['main']['App']['HijackSystemPath'](arg1, arg2);
 }
 
+export function ImportSdkEnvironmentFromTxt() {
+  return window['go']['main']['App']['ImportSdkEnvironmentFromTxt']();
+}
+
 export function InstallVersion(arg1, arg2) {
   return window['go']['main']['App']['InstallVersion'](arg1, arg2);
 }
 
-export function ImportSdkEnvironmentFromTxt() {
-  return window['go']['main']['App']['ImportSdkEnvironmentFromTxt']();
+export function PreviewCurrentEnvironmentSdks() {
+  return window['go']['main']['App']['PreviewCurrentEnvironmentSdks']();
 }
 
 export function RefreshAvailablePlugins() {

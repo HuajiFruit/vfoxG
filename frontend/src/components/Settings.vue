@@ -247,14 +247,11 @@ onMounted(() => {
           <p>{{ t('settings.terminal.desc') }}</p>
         </div>
         <div class="setting-action">
-          <label class="switch-control" :class="{ active: terminalVisible }">
-            <input type="checkbox" v-model="terminalVisible">
+          <label class="switch-control" :class="{ active: terminalVisible }" :title="t('settings.terminal.show')">
+            <input type="checkbox" v-model="terminalVisible" :aria-label="t('settings.terminal.show')">
             <span class="switch-track">
-              <span class="switch-thumb">
-                <span class="material-symbols-outlined">{{ terminalVisible ? 'terminal' : 'terminal_off' }}</span>
-              </span>
+              <span class="switch-thumb"></span>
             </span>
-            <span class="switch-label">{{ t('settings.terminal.show') }}</span>
           </label>
         </div>
       </div>
@@ -618,14 +615,10 @@ onMounted(() => {
 .switch-control {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  width: 52px;
+  height: 32px;
   cursor: pointer;
-  color: var(--md-on-surface-variant);
-  font-size: 14px;
-  font-weight: 500;
   user-select: none;
-  padding: 4px 0;
-  transition: color 180ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .switch-control input {
@@ -633,8 +626,8 @@ onMounted(() => {
 }
 
 .switch-track {
-  width: 52px;
-  height: 32px;
+  width: 100%;
+  height: 100%;
   padding: 3px;
   display: inline-flex;
   align-items: center;
@@ -650,24 +643,12 @@ onMounted(() => {
   width: 24px;
   height: 24px;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
   border-radius: 50%;
   background: var(--md-outline);
-  color: var(--md-surface-container-highest);
   transform: translateX(0);
   transition: transform 180ms cubic-bezier(0.2, 0, 0, 1),
               background-color 180ms cubic-bezier(0.2, 0, 0, 1),
-              color 180ms cubic-bezier(0.2, 0, 0, 1),
               box-shadow 180ms cubic-bezier(0.2, 0, 0, 1);
-}
-
-.switch-thumb .material-symbols-outlined {
-  font-size: 15px;
-}
-
-.switch-control.active {
-  color: var(--md-on-surface);
 }
 
 .switch-control.active .switch-track {
@@ -680,13 +661,8 @@ onMounted(() => {
 
 .switch-control.active .switch-thumb {
   background: var(--accent-cyan, var(--md-primary));
-  color: #0d1718;
   transform: translateX(20px);
   box-shadow: 0 6px 12px rgba(0, 0, 0, 0.18);
-}
-
-.switch-label {
-  white-space: nowrap;
 }
 
 @media (max-width: 980px) {

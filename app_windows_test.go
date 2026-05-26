@@ -41,7 +41,10 @@ func TestWindowsShimScriptUsesAllPlaceholders(t *testing.T) {
 		`set "SDK_ROOT=C:\SDK Root"`,
 		`%SDK_ROOT%\Scripts\pip.exe`,
 		`%SDK_ROOT%\bin\pip.cmd`,
+		`where "%ALIAS_NAME%"`,
+		`if /I not "%%~fI"=="%~f0"`,
 		`vfoxG: pip for python is not available`,
+		`no fallback pip was found on PATH`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("shim script missing %q:\n%s", want, script)

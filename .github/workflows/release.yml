@@ -14,18 +14,18 @@ env:
 jobs:
   build-windows:
     name: Build Windows
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.23.0'
       
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
@@ -72,7 +72,7 @@ jobs:
           Copy-Item build\bin\vfoxG-386-installer.exe release_staging\vfoxG-windows-386-installer.exe -Force
           
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release_staging/*
 
@@ -81,15 +81,15 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.23.0'
           
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           
@@ -124,7 +124,7 @@ jobs:
           nfpm pkg --packager rpm --target build/bin/
           
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             build/bin/vfoxG-linux-amd64-portable.tar.gz
@@ -136,15 +136,15 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.23.0'
           
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           
@@ -179,6 +179,6 @@ jobs:
             "build/bin/vfoxG.app"
             
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: build/bin/vfoxG-macos-arm64.dmg

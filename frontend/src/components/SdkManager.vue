@@ -1,6 +1,6 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePluginWithOptions, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginPathOverride, GetActiveCustomSdk, GetPlatformInfo, ExportCurrentEnvironmentSdks, ImportSdkEnvironmentFromTxt } from '../../wailsjs/go/main/App';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePluginWithOptions, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginPathOverride, GetActiveCustomSdk, GetPlatformInfo } from '../../wailsjs/go/main/App';
 import { EventsOn, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
 import PluginIcon from './PluginIcon.vue';
@@ -26,12 +26,13 @@ const transitionName = ref('fade-slide-forward');
 const selectedSdk = ref<main.SdkInfo | null>(null);
 const versionPaths = ref<Record<string, Record<string, string>>>({});
 const usingVersion = ref<string | null>(null);
-const exportingSdks = ref(false);
-const importingSdks = ref(false);
+const unusingSdk = ref<string | null>(null);
 
 const removingPlugin = ref<string | null>(null);
 
-const emit = defineEmits(['start-task', 'notify']);
+type SidebarAction = { id: number; type: 'display' };
+const props = defineProps<{ sidebarAction?: SidebarAction | null }>();
+const emit = defineEmits(['start-task', 'notify', 'sidebar-action-done', 'open-plugin-market', 'open-sync']);
 let sdksFetchSeq = 0;
 let detailFetchSeq = 0;
 let compatFetchSeq = 0;
@@ -174,6 +175,9 @@ const handleUseCustomPath = async (name: string, path: string) => {
     if (result !== 'ok') {
       notifyError(t('sdk.custom.apply_error'));
     }
+    clearCurrentState(name);
+    await fetchDetail(name, ++detailFetchSeq);
+    await fetchVfoxSdks();
     await checkCompatMode(name);
   } catch (e) {
     notifyError(getErrorMessage(e, t('sdk.custom.apply_exception')));
@@ -232,42 +236,6 @@ const fetchAllSdks = async () => {
     if (requestId === sdksFetchSeq) {
       loading.value = false;
     }
-  }
-};
-
-const handleExportSdks = async () => {
-  exportingSdks.value = true;
-  try {
-    const path = await ExportCurrentEnvironmentSdks();
-    if (path) {
-      notifySuccess(t('sdk.export.success', { path }));
-    }
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.export.error')));
-  } finally {
-    exportingSdks.value = false;
-  }
-};
-
-const handleImportSdks = async () => {
-  importingSdks.value = true;
-  try {
-    const result = await ImportSdkEnvironmentFromTxt();
-    if (result?.path) {
-      await fetchAllSdks();
-      nonVfoxSdksMap.value = await GetNonVfoxSdks();
-      const message = t('sdk.import.success', {
-        imported: result.importedCustomSdks ?? 0,
-        skipped: result.skippedCustomSdks ?? 0,
-        vfox: result.vfoxSdksFound ?? 0,
-      });
-      const warningText = result.warnings?.length ? ` ${result.warnings.join(' ')}` : '';
-      notifySuccess(`${message}${warningText}`);
-    }
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.import.error')));
-  } finally {
-    importingSdks.value = false;
   }
 };
 
@@ -447,12 +415,26 @@ const closeDetail = () => {
   }, 300);
 };
 
+watch(
+  () => props.sidebarAction,
+  (action) => {
+    if (!action) return;
+    if (activeView.value === 'detail') {
+      closeDetail();
+    }
+    emit('sidebar-action-done', action.id);
+  },
+  { immediate: true }
+);
+
 const handleUse = async (name: string, version: string) => {
   emit('start-task', t('task.version.switch', { name, version }));
   usingVersion.value = version;
   try {
     await UseVersion(name, version);
-    // UseVersion 异步执行，由 sdk-list-changed 事件触发刷新
+    await fetchDetail(name, ++detailFetchSeq);
+    await fetchVfoxSdks();
+    await checkCompatMode(name);
   } catch (err) {
     notifyError(getErrorMessage(err, t('sdk.switch_error', { name, version })));
   } finally {
@@ -460,13 +442,35 @@ const handleUse = async (name: string, version: string) => {
   }
 };
 
+const clearCurrentState = (name: string) => {
+  const detail = sdkDetails.value[name];
+  if (detail) {
+    detail.current = '';
+    (detail.versions || []).forEach(v => { v.isCurrent = false; });
+  }
+  if (selectedSdk.value?.name === name) {
+    activeCustomSdk.value = '';
+  }
+};
+
 const handleUnuse = async (name: string) => {
+  if (unusingSdk.value === name) return;
   emit('start-task', t('task.version.unset', { name }));
+  unusingSdk.value = name;
   try {
     await UnuseVersion(name);
-    // UnuseVersion 异步执行，由 sdk-list-changed 事件触发刷新
+    clearCurrentState(name);
+    await fetchVfoxSdks();
+    if (selectedSdk.value?.name === name) {
+      await fetchDetail(name, ++detailFetchSeq);
+      await checkCompatMode(name);
+    }
   } catch (err) {
     notifyError(getErrorMessage(err, t('sdk.unset_error', { name })));
+  } finally {
+    if (unusingSdk.value === name) {
+      unusingSdk.value = null;
+    }
   }
 };
 
@@ -490,7 +494,6 @@ const handleInstall = async (name: string, version: string) => {
     notifyError(getErrorMessage(err, t('sdk.install_error', { name, version })));
   }
 };
-
 
 const confirmAction = ref<{ type: 'removePlugin' | 'uninstallVersion' | 'removeCustomSdk' | null; name: string; version?: string; path?: string }>({ type: null, name: '' });
 
@@ -616,6 +619,14 @@ const expandedVersions = ref<Record<string, boolean>>({});
 const toggleExpand = (id: string) => {
   expandedVersions.value[id] = !expandedVersions.value[id];
 };
+
+const openPluginMarket = () => {
+  emit('open-plugin-market');
+};
+
+const openSync = () => {
+  emit('open-sync');
+};
 </script>
 
 <template>
@@ -625,30 +636,45 @@ const toggleExpand = (id: string) => {
       <div v-if="activeView === 'list'" key="list" class="view-container">
         <div class="sdk-list-header">
           <h2>{{ t('sdk.installed.title') }}</h2>
-          <div class="sdk-list-actions">
-            <button class="btn tonal small" :disabled="importingSdks || exportingSdks" @click="handleImportSdks">
-              <div v-if="importingSdks" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
-              <template v-else>
-                <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">upload_file</span>
-                {{ t('sdk.import') }}
-              </template>
-            </button>
-            <button class="btn tonal small" :disabled="exportingSdks || importingSdks" @click="handleExportSdks">
-              <div v-if="exportingSdks" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
-              <template v-else>
-                <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">download</span>
-                {{ t('sdk.export') }}
-              </template>
-            </button>
-          </div>
         </div>
         
         <div v-if="loading" class="flex-center" style="height: 200px;">
           <div class="spinner"></div>
         </div>
 
-        <div v-else-if="sdks.length === 0" class="empty-state" style="text-align: center; padding: 40px;">
-          {{ t('sdk.installed.empty') }}
+        <div v-else-if="sdks.length === 0" class="sdk-empty-panel">
+          <div class="sdk-empty-art" aria-hidden="true">
+            <span class="material-symbols-outlined">deployed_code</span>
+          </div>
+          <div class="sdk-empty-content">
+            <p class="empty-kicker">{{ t('sdk.empty.kicker') }}</p>
+            <h3>{{ t('sdk.empty.title') }}</h3>
+            <p>{{ t('sdk.empty.desc') }}</p>
+          </div>
+          <div class="sdk-empty-actions">
+            <button class="btn primary" @click="openPluginMarket">
+              <span class="material-symbols-outlined">extension</span>
+              {{ t('sdk.empty.market') }}
+            </button>
+            <button class="btn tonal" @click="openSync">
+              <span class="material-symbols-outlined">upload_file</span>
+              {{ t('sdk.empty.import') }}
+            </button>
+          </div>
+          <div class="sdk-empty-steps">
+            <div class="sdk-empty-step">
+              <span class="material-symbols-outlined">add_circle</span>
+              <span>{{ t('sdk.empty.step.plugin') }}</span>
+            </div>
+            <div class="sdk-empty-step">
+              <span class="material-symbols-outlined">download</span>
+              <span>{{ t('sdk.empty.step.install') }}</span>
+            </div>
+            <div class="sdk-empty-step">
+              <span class="material-symbols-outlined">alt_route</span>
+              <span>{{ t('sdk.empty.step.use') }}</span>
+            </div>
+          </div>
         </div>
 
         <template v-else>
@@ -832,7 +858,7 @@ const toggleExpand = (id: string) => {
                     </div>
                     <div class="version-actions">
                       <button v-if="!ver.isCurrent" class="btn tonal small" :disabled="usingVersion === (ver.isCustom ? ver.path : ver.version)" @click="ver.isCustom ? handleUseCustomPath(selectedSdk.name, ver.path) : handleUse(selectedSdk.name, ver.vfoxVersion!)">{{ usingVersion === (ver.isCustom ? ver.path : ver.version) ? '...' : t('sdk.use') }}</button>
-                      <button v-if="ver.isCurrent" class="btn text small danger" @click="handleUnuse(selectedSdk.name)">{{ t('sdk.unset') }}</button>
+                      <button v-if="ver.isCurrent" class="btn text small danger" :disabled="unusingSdk === selectedSdk.name" @click="handleUnuse(selectedSdk.name)">{{ unusingSdk === selectedSdk.name ? '...' : t('sdk.unset') }}</button>
                       <button v-if="ver.isCustom" class="btn text small danger" @click="requestRemoveCustomPath(selectedSdk.name, ver.path)">{{ t('sdk.remove') }}</button>
                       <button v-else class="btn text small danger" @click="requestUninstall(selectedSdk.name, ver.vfoxVersion!)">{{ t('sdk.uninstall') }}</button>
                     </div>
@@ -894,6 +920,32 @@ const toggleExpand = (id: string) => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else key="empty-list" class="view-container">
+        <div class="sdk-list-header">
+          <h2>{{ t('sdk.installed.title') }}</h2>
+        </div>
+        <div class="sdk-empty-panel">
+          <div class="sdk-empty-art" aria-hidden="true">
+            <span class="material-symbols-outlined">deployed_code</span>
+          </div>
+          <div class="sdk-empty-content">
+            <p class="empty-kicker">{{ t('sdk.empty.kicker') }}</p>
+            <h3>{{ t('sdk.empty.title') }}</h3>
+            <p>{{ t('sdk.empty.desc') }}</p>
+          </div>
+          <div class="sdk-empty-actions">
+            <button class="btn primary" @click="openPluginMarket">
+              <span class="material-symbols-outlined">extension</span>
+              {{ t('sdk.empty.market') }}
+            </button>
+            <button class="btn tonal" @click="openSync">
+              <span class="material-symbols-outlined">upload_file</span>
+              {{ t('sdk.empty.import') }}
+            </button>
           </div>
         </div>
       </div>

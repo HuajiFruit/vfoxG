@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, nextTick, watch, provide } from 'vue';
 import { EventsOn, WindowSetLightTheme, WindowSetDarkTheme, WindowSetSystemDefaultTheme } from '../wailsjs/runtime/runtime';
 import { t } from './i18n';
 import SdkManager from './components/SdkManager.vue';
+import SdkSync from './components/SdkSync.vue';
 import PluginMarket from './components/PluginMarket.vue';
 import Settings from './components/Settings.vue';
 
@@ -50,6 +51,9 @@ const handleSystemThemeChange = () => {
 const currentTab = ref('sdk');
 const navTransition = ref('slide-up');
 const showTaskToast = ref(false);
+type SdkSidebarAction = { id: number; type: 'display' };
+const sdkSidebarAction = ref<SdkSidebarAction | null>(null);
+let sdkSidebarActionId = 0;
 type ToastStatus = 'running' | 'success' | 'error' | 'info';
 type NotifyPayload = string | {
   title?: string;
@@ -60,14 +64,24 @@ type NotifyPayload = string | {
 
 const switchTab = (tab: string) => {
   if (tab === currentTab.value) return;
-  if (currentTab.value === 'sdk' && (tab === 'plugin' || tab === 'settings')) {
-    navTransition.value = 'slide-up';
-  } else if (currentTab.value === 'plugin' && tab === 'settings') {
-    navTransition.value = 'slide-up';
-  } else {
-    navTransition.value = 'slide-down';
-  }
+  const tabOrder = ['sdk', 'sync', 'plugin', 'settings'];
+  const currentIndex = tabOrder.indexOf(currentTab.value);
+  const nextIndex = tabOrder.indexOf(tab);
+  navTransition.value = nextIndex >= currentIndex ? 'slide-up' : 'slide-down';
   currentTab.value = tab;
+};
+
+const triggerSdkSidebarAction = (type: SdkSidebarAction['type']) => {
+  if (currentTab.value !== 'sdk') {
+    switchTab('sdk');
+  }
+  sdkSidebarAction.value = { id: ++sdkSidebarActionId, type };
+};
+
+const clearSdkSidebarAction = (id: number) => {
+  if (sdkSidebarAction.value?.id === id) {
+    sdkSidebarAction.value = null;
+  }
 };
 const taskTitle = ref('');
 const taskStatus = ref<ToastStatus>('running');
@@ -259,9 +273,13 @@ onUnmounted(() => {
         <h2>vfoxG</h2>
       </div>
       <nav>
-        <button class="nav-btn" :class="{active: currentTab === 'sdk'}" @click="switchTab('sdk')">
-          <span class="material-symbols-outlined">box</span>
-          {{ t('nav.installed') }}
+        <button class="nav-btn" :class="{active: currentTab === 'sdk'}" @click="triggerSdkSidebarAction('display')">
+          <span class="material-symbols-outlined">dashboard</span>
+          {{ t('nav.display') }}
+        </button>
+        <button class="nav-btn" :class="{active: currentTab === 'sync'}" @click="switchTab('sync')">
+          <span class="material-symbols-outlined">sync_alt</span>
+          {{ t('nav.sync') }}
         </button>
         <button class="nav-btn" :class="{active: currentTab === 'plugin'}" @click="switchTab('plugin')">
           <span class="material-symbols-outlined">extension</span>
@@ -279,7 +297,17 @@ onUnmounted(() => {
     <div class="main-shell">
       <div class="main-content">
         <Transition :name="navTransition" mode="out-in">
-          <SdkManager v-if="currentTab === 'sdk'" key="sdk" @start-task="handleStartTask" @notify="handleNotify" />
+          <SdkManager
+            v-if="currentTab === 'sdk'"
+            key="sdk"
+            :sidebar-action="sdkSidebarAction"
+            @sidebar-action-done="clearSdkSidebarAction"
+            @start-task="handleStartTask"
+            @notify="handleNotify"
+            @open-plugin-market="switchTab('plugin')"
+            @open-sync="switchTab('sync')"
+          />
+          <SdkSync v-else-if="currentTab === 'sync'" key="sync" @notify="handleNotify" />
           <PluginMarket v-else-if="currentTab === 'plugin'" key="plugin" @start-task="handleStartTask" @notify="handleNotify" />
           <Settings v-else-if="currentTab === 'settings'" key="settings" @notify="handleNotify" />
         </Transition>
