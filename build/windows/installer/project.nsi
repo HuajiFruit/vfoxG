@@ -84,6 +84,13 @@ Function SkipDirIfUpgrade
     ${EndIf}
 FunctionEnd
 
+Function CloseRunningApp
+    DetailPrint "Closing running ${INFO_PRODUCTNAME}..."
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T /F'
+    Pop $R9
+    Sleep 1000
+FunctionEnd
+
 Function .onInit
    !insertmacro wails.checkArchitecture
 
@@ -110,6 +117,7 @@ Function .onInit
             MessageBox MB_YESNO|MB_ICONQUESTION "$(^Name) v$1 is already installed.$\n$\nDo you want to upgrade to v${INFO_PRODUCTVERSION}?" IDYES doUpgrade
             Abort
             doUpgrade:
+                Call CloseRunningApp
                 ExecWait '"$INSTDIR\uninstall.exe" /S _?=$INSTDIR'
         ${EndIf}
         doReinstall:
@@ -118,6 +126,8 @@ Function .onInit
 FunctionEnd
 
 Section
+    Call CloseRunningApp
+
     SetOverwrite on
 
     !insertmacro wails.setShellContext
@@ -147,6 +157,8 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
+    Call un.CloseRunningApp
+
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "cleanup_vfoxg.ps1"
@@ -164,3 +176,10 @@ Section "uninstall"
 
     !insertmacro wails.deleteUninstaller
 SectionEnd
+
+Function un.CloseRunningApp
+    DetailPrint "Closing running ${INFO_PRODUCTNAME}..."
+    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T /F'
+    Pop $R9
+    Sleep 1000
+FunctionEnd
