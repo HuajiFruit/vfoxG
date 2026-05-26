@@ -206,7 +206,11 @@ const truncateVersion = (version?: string, maxLength = 30) => {
   return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
 };
 
-const mergeSdkLists = (vfox: main.SdkInfo[], system: main.SdkInfo[]) => {
+const safeSdkList = (value: main.SdkInfo[] | null | undefined) => Array.isArray(value) ? value : [];
+
+const mergeSdkLists = (vfox: main.SdkInfo[] | null | undefined, system: main.SdkInfo[] | null | undefined) => {
+  vfox = safeSdkList(vfox);
+  system = safeSdkList(system);
   const vfoxNames = new Set(vfox.map(s => s.name));
   return [...vfox, ...system.filter(s => !vfoxNames.has(s.name))];
 };
@@ -227,7 +231,7 @@ const fetchAllSdks = async () => {
   try {
     const all = await GetAllSdks();
     if (requestId !== sdksFetchSeq) return;
-    sdks.value = all;
+    sdks.value = safeSdkList(all);
   } catch (err) {
     if (requestId === sdksFetchSeq) {
       notifyError(getErrorMessage(err, t('sdk.load_error')));

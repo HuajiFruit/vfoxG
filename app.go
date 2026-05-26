@@ -1232,7 +1232,7 @@ func (a *App) GetInstalledSdks() ([]SdkInfo, error) {
 	}
 
 	lines := strings.Split(out, "\n")
-	var sdks []SdkInfo
+	sdks := make([]SdkInfo, 0)
 	var currentSdk *SdkInfo
 
 	// 匹配插件名 (如 ├─┬golang 或 └─┬java，或者没有版本的 ├──php 或 └──php)
@@ -2179,7 +2179,7 @@ func (a *App) ScanSystemSdks() {
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var result []SdkInfo
+	result := make([]SdkInfo, 0, len(systemSDKDefs))
 
 	for _, def := range systemSDKDefs {
 		wg.Add(1)
@@ -2481,7 +2481,7 @@ func (a *App) GetAllSdks() ([]SdkInfo, error) {
 	cached := a.GetCachedSystemSdks()
 
 	seen := make(map[string]bool)
-	var result []SdkInfo
+	result := make([]SdkInfo, 0, len(vfoxSdks)+len(cached))
 
 	for _, s := range vfoxSdks {
 		seen[s.Name] = true
