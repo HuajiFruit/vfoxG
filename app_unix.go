@@ -135,11 +135,19 @@ func (a *App) CheckWin11CompatMode() bool {
 }
 
 func findExecutable(exe string, cleanEnv []string) string {
+	candidates := findExecutableCandidates(exe, cleanEnv)
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func findExecutableCandidates(exe string, cleanEnv []string) []string {
 	if strings.ContainsRune(exe, filepath.Separator) {
 		if isExecutableFile(exe) {
-			return exe
+			return []string{exe}
 		}
-		return ""
+		return nil
 	}
 
 	pathValue := os.Getenv("PATH")
@@ -150,16 +158,17 @@ func findExecutable(exe string, cleanEnv []string) string {
 		}
 	}
 
+	var candidates []string
 	for _, dir := range filepath.SplitList(pathValue) {
 		if dir == "" {
 			continue
 		}
 		candidate := filepath.Join(dir, exe)
 		if isExecutableFile(candidate) {
-			return candidate
+			candidates = append(candidates, candidate)
 		}
 	}
-	return ""
+	return candidates
 }
 
 func isExecutableFile(path string) bool {

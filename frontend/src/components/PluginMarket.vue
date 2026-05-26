@@ -27,6 +27,9 @@ const availableVersions = ref<string[]>([]);
 const installedVersions = ref<Set<string>>(new Set());
 const loadingVersions = ref(false);
 const installingVersion = ref<string | null>(null);
+let pluginsFetchSeq = 0;
+let versionsFetchSeq = 0;
+let detailResetTimer: ReturnType<typeof setTimeout> | null = null;
 let offVfoxHomeChanged: (() => void) | null = null;
 
 const emit = defineEmits(['start-task', 'notify']);
@@ -41,7 +44,23 @@ const notifyError = (message: string, title = t('common.error')) => {
   emit('notify', { type: 'error', title, message });
 };
 
+const clearDetailResetTimer = () => {
+  if (detailResetTimer !== null) {
+    clearTimeout(detailResetTimer);
+    detailResetTimer = null;
+  }
+};
+
+const syncSelectedPlugin = () => {
+  if (!selectedPlugin.value) return;
+  const updated = plugins.value.find(p => p.name === selectedPlugin.value!.name);
+  if (updated) {
+    selectedPlugin.value = updated;
+  }
+};
+
 const fetchPlugins = async () => {
+  const requestId = ++pluginsFetchSeq;
   if (plugins.value.length === 0) {
     loading.value = true;
   }
@@ -50,45 +69,41 @@ const fetchPlugins = async () => {
       GetAvailablePlugins(),
       GetAddedPlugins()
     ]);
+    if (requestId !== pluginsFetchSeq) return;
     const addedNames = new Set(addedPlugins);
     plugins.value = available.map(p => ({
       ...p,
       isAdded: addedNames.has(p.name)
     }));
-    loading.value = false;
+    syncSelectedPlugin();
 
     // Background silent refresh
-    RefreshAvailablePlugins().then(async () => {
+    void RefreshAvailablePlugins().then(async () => {
+      if (requestId !== pluginsFetchSeq) return;
       const [freshAvailable, freshAdded] = await Promise.all([
         GetAvailablePlugins(),
         GetAddedPlugins()
       ]);
+      if (requestId !== pluginsFetchSeq) return;
       const freshAddedNames = new Set(freshAdded);
       plugins.value = freshAvailable.map(p => ({
         ...p,
         isAdded: freshAddedNames.has(p.name)
       }));
-      if (selectedPlugin.value) {
-        const updated = plugins.value.find(p => p.name === selectedPlugin.value!.name);
-        if (updated) {
-          selectedPlugin.value = updated;
-        }
-      }
+      syncSelectedPlugin();
     }).catch(e => {
-      notifyError(getErrorMessage(e, t('market.refresh_error')));
-    });
-    
-    // Update selectedPlugin if we are in detail view
-    if (selectedPlugin.value) {
-      const updated = plugins.value.find(p => p.name === selectedPlugin.value!.name);
-      if (updated) {
-        selectedPlugin.value = updated;
+      if (requestId === pluginsFetchSeq) {
+        notifyError(getErrorMessage(e, t('market.refresh_error')));
       }
-    }
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('market.load_error')));
+    if (requestId === pluginsFetchSeq) {
+      notifyError(getErrorMessage(err, t('market.load_error')));
+    }
   } finally {
-    loading.value = false;
+    if (requestId === pluginsFetchSeq) {
+      loading.value = false;
+    }
   }
 };
 
@@ -101,15 +116,18 @@ const openUrl = async (url: string) => {
 };
 
 const fetchPluginVersions = async (name: string) => {
+  const requestId = ++versionsFetchSeq;
   loadingVersions.value = true;
   availableVersions.value = [];
-  installedVersions.value.clear();
+  installedVersions.value = new Set();
   try {
     const results = await SearchVersions(name);
+    if (requestId !== versionsFetchSeq) return;
     availableVersions.value = results;
     
     try {
       const detail = await GetSdkDetail(name);
+      if (requestId !== versionsFetchSeq) return;
       const instSet = new Set<string>();
       if (detail && detail.versions) {
         detail.versions.forEach(v => instSet.add(v.version));
@@ -119,16 +137,25 @@ const fetchPluginVersions = async (name: string) => {
       // SDK might not have any installed versions, that's fine
     }
   } catch (err) {
-    notifyError(getErrorMessage(err, t('market.versions_error', { name })));
+    if (requestId === versionsFetchSeq) {
+      notifyError(getErrorMessage(err, t('market.versions_error', { name })));
+    }
   } finally {
-    loadingVersions.value = false;
+    if (requestId === versionsFetchSeq) {
+      loadingVersions.value = false;
+    }
   }
 };
 
 const openDetail = async (p: main.PluginInfo) => {
+  clearDetailResetTimer();
+  ++versionsFetchSeq;
   selectedPlugin.value = p;
   transitionName.value = 'fade-slide-forward';
   activeView.value = 'detail';
+  availableVersions.value = [];
+  installedVersions.value = new Set();
+  loadingVersions.value = false;
   
   if (p.isAdded) {
     await fetchPluginVersions(p.name);
@@ -136,12 +163,16 @@ const openDetail = async (p: main.PluginInfo) => {
 };
 
 const closeDetail = () => {
+  clearDetailResetTimer();
+  ++versionsFetchSeq;
   transitionName.value = 'fade-slide-backward';
   activeView.value = 'list';
-  setTimeout(() => {
+  detailResetTimer = setTimeout(() => {
     selectedPlugin.value = null;
     availableVersions.value = [];
-    installedVersions.value.clear();
+    installedVersions.value = new Set();
+    loadingVersions.value = false;
+    detailResetTimer = null;
   }, 300);
 };
 
@@ -223,6 +254,10 @@ const installVersion = async (pluginName: string, version: string) => {
   installingVersion.value = version;
   try {
     await InstallVersion(pluginName, version);
+    await fetchPlugins();
+    if (selectedPlugin.value && selectedPlugin.value.name === pluginName) {
+      await fetchPluginVersions(pluginName);
+    }
     installedVersions.value.add(version);
   } catch (err) {
     notifyError(getErrorMessage(err, t('market.install_error', { name: pluginName, version })));
@@ -236,15 +271,22 @@ const installVersion = async (pluginName: string, version: string) => {
 onMounted(() => {
   fetchPlugins();
   offVfoxHomeChanged = EventsOn('vfox-home-changed', () => {
+    clearDetailResetTimer();
+    ++pluginsFetchSeq;
+    ++versionsFetchSeq;
     selectedPlugin.value = null;
     availableVersions.value = [];
-    installedVersions.value.clear();
+    installedVersions.value = new Set();
+    loadingVersions.value = false;
     activeView.value = 'list';
     fetchPlugins();
   });
 });
 
 onUnmounted(() => {
+  clearDetailResetTimer();
+  ++pluginsFetchSeq;
+  ++versionsFetchSeq;
   if (offVfoxHomeChanged) {
     offVfoxHomeChanged();
     offVfoxHomeChanged = null;

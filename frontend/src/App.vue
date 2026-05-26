@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, provide } from 'vue';
-import { EventsOn, EventsOff, WindowSetLightTheme, WindowSetDarkTheme, WindowSetSystemDefaultTheme } from '../wailsjs/runtime/runtime';
+import { EventsOn, WindowSetLightTheme, WindowSetDarkTheme, WindowSetSystemDefaultTheme } from '../wailsjs/runtime/runtime';
 import { t } from './i18n';
 import SdkManager from './components/SdkManager.vue';
 import PluginMarket from './components/PluginMarket.vue';
@@ -76,6 +76,7 @@ const taskProgress = ref(0);
 const hasTaskProgress = ref(false);
 const taskHadError = ref(false);
 let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
+let offVfoxLog: (() => void) | null = null;
 type TerminalLogLevel = 'info' | 'success' | 'error';
 type TerminalLogEntry = {
   id: number;
@@ -93,7 +94,7 @@ const getTerminalLogLevel = (log: string): TerminalLogLevel => {
   if (
     log.startsWith('[EXIT ERROR]') ||
     log.startsWith('[TIMEOUT]') ||
-    log.startsWith('[ERROR]') ||
+    log.startsWith('[APP ERROR]') ||
     log.startsWith('[STDOUT READ ERROR]') ||
     log.startsWith('[STDERR READ ERROR]')
   ) {
@@ -184,7 +185,7 @@ const handleNotify = (payload: NotifyPayload) => {
 };
 
 const formatTaskError = (log: string) => log
-  .replace(/^\[(?:EXIT ERROR|STDOUT READ ERROR|STDERR READ ERROR|TIMEOUT|ERROR)\]\s*/, '')
+  .replace(/^\[(?:EXIT ERROR|STDOUT READ ERROR|STDERR READ ERROR|TIMEOUT|APP ERROR)\]\s*/, '')
   .trim() || t('toast.task_failed');
 
 const closeToast = () => {
@@ -199,7 +200,7 @@ onMounted(() => {
   applyTheme();
   mediaQuery.addEventListener('change', handleSystemThemeChange);
 
-  EventsOn('vfox-log', (log: string) => {
+  offVfoxLog = EventsOn('vfox-log', (log: string) => {
     appendTerminalLog(log);
 
     const parsedProgress = extractProgressPercent(log);
@@ -223,7 +224,7 @@ onMounted(() => {
     } else if (
       log.startsWith('[EXIT ERROR]') ||
       log.startsWith('[TIMEOUT]') ||
-      log.startsWith('[ERROR]') ||
+      log.startsWith('[APP ERROR]') ||
       log.startsWith('[STDOUT READ ERROR]') ||
       log.startsWith('[STDERR READ ERROR]')
     ) {
@@ -242,7 +243,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   mediaQuery.removeEventListener('change', handleSystemThemeChange);
-  EventsOff('vfox-log');
+  if (offVfoxLog) {
+    offVfoxLog();
+    offVfoxLog = null;
+  }
   if (autoCloseTimer) clearTimeout(autoCloseTimer);
 });
 </script>

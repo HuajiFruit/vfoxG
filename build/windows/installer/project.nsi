@@ -147,6 +147,11 @@ SectionEnd
 Section "uninstall"
     !insertmacro wails.setShellContext
 
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File "cleanup_vfoxg.ps1"
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\cleanup_vfoxg.ps1" -InstallDir "$INSTDIR" -ProductName "${INFO_PRODUCTNAME}" -ProductExecutable "${PRODUCT_EXECUTABLE}"'
+
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
     RMDir /r $INSTDIR

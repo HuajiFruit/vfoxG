@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	stdruntime "runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,42 +36,26 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if err := a.loadVfoxHomeSetting(); err != nil {
-		a.emitEvent("vfox-log", "[ERROR] "+err.Error())
+		a.emitEvent("vfox-log", "[APP ERROR] "+err.Error())
 	}
 	if err := a.ensureVfoxHomeDir(); err != nil {
-		a.emitEvent("vfox-log", "[ERROR] "+err.Error())
+		a.emitEvent("vfox-log", "[APP ERROR] "+err.Error())
 	}
 	go a.ScanSystemSdks()
 	go a.RefreshAvailablePlugins() // 后台预热插件市场缓存
 }
 
 // getCleanedEnvForVfox returns a copy of the current environment but sanitizes the PATH
-// to remove any previously injected vfox sdks, ensuring `vfox` reads from .vfox.toml.
+// to remove any previously injected vfox SDK/shim paths.
 func (a *App) getCleanedEnvForVfox() []string {
 	env := os.Environ()
 	vfoxHome := strings.TrimSpace(a.getVfoxHome())
-	vfoxSdksDir := a.getVfoxHomePath("sdks")
-	sep := string(filepath.ListSeparator) // ";" on Windows, ":" on Unix
+	roots := a.vfoxManagedPathRoots()
 
-	if vfoxSdksDir != "" {
-		for i, e := range env {
-			if strings.HasPrefix(strings.ToLower(e), "path=") {
-				pathVal := e[5:]
-				parts := strings.Split(pathVal, sep)
-				var clean []string
-				for _, p := range parts {
-					pTrim := strings.TrimSpace(p)
-					if pTrim == "" {
-						continue
-					}
-					if isPathWithin(pTrim, vfoxSdksDir) {
-						continue
-					}
-					clean = append(clean, pTrim)
-				}
-				env[i] = "PATH=" + strings.Join(clean, sep)
-				break
-			}
+	for i, e := range env {
+		if strings.HasPrefix(strings.ToLower(e), "path=") {
+			env[i] = "PATH=" + cleanPathValue(e[5:], roots)
+			break
 		}
 	}
 	// 添加伪装变量，使用 cmd/bash 可以避免 vfox 弹出子 shell 而导致死锁
@@ -81,6 +66,65 @@ func (a *App) getCleanedEnvForVfox() []string {
 	env = upsertEnv(env, "VFOX_HOME", vfoxHome)
 	env = upsertEnv(env, "__VFOX_SHELL", shellName)
 	return env
+}
+
+func (a *App) vfoxManagedPathRoots() []string {
+	var roots []string
+	addRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		root = filepath.Clean(root)
+		for _, existing := range roots {
+			if samePath(existing, root) {
+				return
+			}
+		}
+		roots = append(roots, root)
+	}
+
+	if vfoxHome := strings.TrimSpace(a.getVfoxHome()); vfoxHome != "" {
+		addRoot(filepath.Join(vfoxHome, "sdks"))
+		addRoot(filepath.Join(vfoxHome, "path-shims"))
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		legacyHome := filepath.Join(home, ".vfox")
+		addRoot(filepath.Join(legacyHome, "sdks"))
+		addRoot(filepath.Join(legacyHome, "path-shims"))
+	}
+	return roots
+}
+
+func cleanPathValue(pathVal string, excludedRoots []string) string {
+	parts := filepath.SplitList(pathVal)
+	var clean []string
+	for _, p := range parts {
+		pTrim := strings.TrimSpace(p)
+		if pTrim == "" {
+			continue
+		}
+		excluded := false
+		for _, root := range excludedRoots {
+			if isPathWithin(pTrim, root) {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			clean = append(clean, pTrim)
+		}
+	}
+	return strings.Join(clean, string(filepath.ListSeparator))
+}
+
+func (a *App) isVfoxManagedPath(path string) bool {
+	for _, root := range a.vfoxManagedPathRoots() {
+		if isPathWithin(path, root) {
+			return true
+		}
+	}
+	return false
 }
 
 // isPathWithin reports whether path is root itself or a child of root.
@@ -188,8 +232,24 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 		return 0, nil, nil
 	}
 
+	var outputMu sync.Mutex
+	lastOutput := ""
+	emitOutputLine := func(line string) {
+		cleanLine := ansiRegex.ReplaceAllString(line, "")
+		if cleanLine == "" {
+			return
+		}
+		outputMu.Lock()
+		lastOutput = cleanLine
+		outputMu.Unlock()
+		a.emitEvent("vfox-log", cleanLine)
+	}
+
 	// 实时读取标准输出
+	var readWG sync.WaitGroup
+	readWG.Add(2)
 	go func() {
+		defer readWG.Done()
 		scanner := bufio.NewScanner(stdoutPipe)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB 缓冲区
 		scanner.Split(splitFunc)
@@ -201,8 +261,7 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 			if line == "" {
 				continue
 			}
-			cleanLine := ansiRegex.ReplaceAllString(line, "")
-			a.emitEvent("vfox-log", cleanLine)
+			emitOutputLine(line)
 		}
 		if err := scanner.Err(); err != nil && a.ctx != nil {
 			a.emitEvent("vfox-log", "[STDOUT READ ERROR] "+err.Error())
@@ -211,6 +270,7 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 
 	// 实时读取标准错误
 	go func() {
+		defer readWG.Done()
 		scanner := bufio.NewScanner(stderrPipe)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB 缓冲区
 		scanner.Split(splitFunc)
@@ -222,8 +282,10 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 			if line == "" {
 				continue
 			}
-			cleanLine := ansiRegex.ReplaceAllString(line, "")
-			a.emitEvent("vfox-log", "[ERROR] "+cleanLine)
+			// Some CLI tools, including vfox during downloads, write progress
+			// to stderr even when the command succeeds. Only cmd.Wait should
+			// decide whether stderr output means failure.
+			emitOutputLine(line)
 		}
 		if err := scanner.Err(); err != nil && a.ctx != nil {
 			a.emitEvent("vfox-log", "[STDERR READ ERROR] "+err.Error())
@@ -231,6 +293,7 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 	}()
 
 	err = cmd.Wait()
+	readWG.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
 		a.emitEvent("vfox-log", "[TIMEOUT] Command cancelled after 30min")
 		if err != nil {
@@ -239,8 +302,16 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 		return fmt.Errorf("vfox %v timed out after 30min", args)
 	}
 	if err != nil {
-		a.emitEvent("vfox-log", fmt.Sprintf("[EXIT ERROR] %v", err))
-		return err
+		outputMu.Lock()
+		detail := strings.TrimSpace(lastOutput)
+		outputMu.Unlock()
+		if detail == "" {
+			detail = err.Error()
+		} else {
+			detail = fmt.Sprintf("%s (%v)", detail, err)
+		}
+		a.emitEvent("vfox-log", "[EXIT ERROR] "+detail)
+		return fmt.Errorf("%s", detail)
 	}
 
 	a.emitEvent("vfox-log", "[DONE]")
@@ -467,6 +538,505 @@ func (a *App) SelectDownloadPath() (string, error) {
 		DefaultDirectory:     defaultDir,
 		CanCreateDirectories: true,
 	})
+}
+
+type sdkEnvironmentExport struct {
+	GeneratedAt  time.Time
+	Platform     PlatformInfo
+	VfoxInPath   bool
+	PathOverride bool
+	VfoxSdks     []sdkEnvironmentVfoxSdk
+	SystemSdks   []SdkInfo
+	CustomSdks   map[string][]SdkInfo
+	Warnings     []string
+}
+
+type sdkEnvironmentVfoxSdk struct {
+	Name             string
+	Versions         []SdkVersion
+	Detail           SdkDetail
+	VersionPaths     map[string]string
+	ActiveCustomPath string
+}
+
+type SdkEnvironmentImportResult struct {
+	Path               string   `json:"path"`
+	ImportedCustomSdks int      `json:"importedCustomSdks"`
+	SkippedCustomSdks  int      `json:"skippedCustomSdks"`
+	VfoxSdksFound      int      `json:"vfoxSdksFound"`
+	Warnings           []string `json:"warnings"`
+}
+
+// ExportCurrentEnvironmentSdks writes the currently detected SDK environment to a text file.
+func (a *App) ExportCurrentEnvironmentSdks() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application context is not ready")
+	}
+
+	snapshot := a.collectSdkEnvironmentExport(time.Now())
+	defaultDir := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		defaultDir = home
+	}
+
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:            "Export SDK environment",
+		DefaultDirectory: defaultDir,
+		DefaultFilename:  fmt.Sprintf("vfoxG-sdk-environment-%s.txt", snapshot.GeneratedAt.Format("20060102-150405")),
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
+		},
+		CanCreateDirectories: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".txt") {
+		path += ".txt"
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(formatSdkEnvironmentExport(snapshot)), 0644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func (a *App) ImportSdkEnvironmentFromTxt() (SdkEnvironmentImportResult, error) {
+	result := SdkEnvironmentImportResult{}
+	if a.ctx == nil {
+		return result, fmt.Errorf("application context is not ready")
+	}
+
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Import SDK environment",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Text Files (*.txt)", Pattern: "*.txt"},
+		},
+	})
+	if err != nil {
+		return result, err
+	}
+	path = strings.TrimSpace(path)
+	result.Path = path
+	if path == "" {
+		return result, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return result, err
+	}
+	rows, warnings := parseSdkEnvironmentImport(string(data))
+	result.Warnings = append(result.Warnings, warnings...)
+
+	customSdks := a.GetNonVfoxSdksMap()
+	for _, row := range rows {
+		switch row.Kind {
+		case "vfox":
+			if row.Name != "" && row.Version != "" {
+				result.VfoxSdksFound++
+			}
+		case "custom":
+			if row.Name == "" || row.Path == "" {
+				result.SkippedCustomSdks++
+				result.Warnings = append(result.Warnings, "Skipped custom SDK row with missing name or path.")
+				continue
+			}
+			if err := validateSDKExecutablePath(row.Path); err != nil {
+				result.SkippedCustomSdks++
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Skipped %s at %s: %v", row.Name, row.Path, err))
+				continue
+			}
+			duplicate := false
+			for _, existing := range customSdks[row.Name] {
+				if samePath(existing.Path, row.Path) {
+					duplicate = true
+					break
+				}
+			}
+			if duplicate {
+				result.SkippedCustomSdks++
+				continue
+			}
+			version := strings.TrimSpace(row.Version)
+			if isUnknownSdkVersion(version) {
+				version = a.DetectSdkPathVersion(row.Name, row.Path)
+			}
+			if version == "" {
+				version = "unknown"
+			}
+			customSdks[row.Name] = append(customSdks[row.Name], SdkInfo{
+				Name:     row.Name,
+				Source:   "system",
+				Path:     row.Path,
+				Versions: []SdkVersion{{Version: version}},
+			})
+			result.ImportedCustomSdks++
+		}
+	}
+
+	if result.ImportedCustomSdks > 0 {
+		if err := a.saveNonVfoxSdksMap(customSdks); err != nil {
+			return result, err
+		}
+		a.emitEvent("sdk-list-changed")
+	}
+	if result.VfoxSdksFound > 0 {
+		result.Warnings = append(result.Warnings, "Vfox-managed SDK rows were read but not installed automatically.")
+	}
+	return result, nil
+}
+
+func (a *App) collectSdkEnvironmentExport(generatedAt time.Time) sdkEnvironmentExport {
+	snapshot := sdkEnvironmentExport{
+		GeneratedAt: generatedAt,
+		Platform:    a.GetPlatformInfo(),
+		CustomSdks:  a.GetNonVfoxSdksMap(),
+	}
+
+	if inPath, err := a.CheckVfoxInPath(); err == nil {
+		snapshot.VfoxInPath = inPath
+	} else {
+		snapshot.Warnings = append(snapshot.Warnings, "Unable to check vfox PATH status: "+err.Error())
+	}
+	snapshot.PathOverride = a.CheckAnyPathOverride()
+
+	if vfoxSdks, err := a.GetInstalledSdks(); err == nil {
+		sort.Slice(vfoxSdks, func(i, j int) bool { return vfoxSdks[i].Name < vfoxSdks[j].Name })
+		for _, sdk := range vfoxSdks {
+			exportSdk := sdkEnvironmentVfoxSdk{
+				Name:         sdk.Name,
+				Versions:     sdk.Versions,
+				VersionPaths: make(map[string]string),
+				Detail:       SdkDetail{Name: sdk.Name},
+			}
+			if detail, err := a.GetSdkDetail(sdk.Name); err == nil {
+				exportSdk.Detail = detail
+				for _, version := range detail.Versions {
+					if path, err := a.GetVersionPath(sdk.Name, version.Version); err == nil {
+						exportSdk.VersionPaths[version.Version] = path
+					}
+				}
+			} else {
+				snapshot.Warnings = append(snapshot.Warnings, fmt.Sprintf("Unable to load vfox SDK detail for %s: %v", sdk.Name, err))
+			}
+			if activeCustomPath, err := a.GetActiveCustomSdk(sdk.Name); err == nil {
+				exportSdk.ActiveCustomPath = activeCustomPath
+			}
+			snapshot.VfoxSdks = append(snapshot.VfoxSdks, exportSdk)
+		}
+	} else {
+		snapshot.Warnings = append(snapshot.Warnings, "Unable to load vfox SDK list: "+err.Error())
+	}
+
+	a.ScanSystemSdks()
+	snapshot.SystemSdks = a.GetCachedSystemSdks()
+	sort.Slice(snapshot.SystemSdks, func(i, j int) bool { return snapshot.SystemSdks[i].Name < snapshot.SystemSdks[j].Name })
+
+	return snapshot
+}
+
+func formatSdkEnvironmentExport(snapshot sdkEnvironmentExport) string {
+	var b strings.Builder
+	writeLine := func(format string, args ...interface{}) {
+		if len(args) == 0 {
+			b.WriteString(format)
+		} else {
+			b.WriteString(fmt.Sprintf(format, args...))
+		}
+		b.WriteString("\r\n")
+	}
+
+	writeLine("vfoxG SDK Environment Export")
+	writeLine("Generated: %s", snapshot.GeneratedAt.Format(time.RFC3339))
+	writeLine("")
+	writeLine("Platform")
+	writeLine("  OS: %s", emptyFallback(snapshot.Platform.Name, snapshot.Platform.OS))
+	writeLine("  Core: %s/%s", snapshot.Platform.CoreOS, snapshot.Platform.CoreArch)
+	writeLine("  VFOX_HOME: %s", emptyFallback(snapshot.Platform.DownloadPath, "(empty)"))
+	writeLine("  Default VFOX_HOME: %s", emptyFallback(snapshot.Platform.DefaultDownloadPath, "(empty)"))
+	writeLine("  vfox in PATH: %s", yesNo(snapshot.VfoxInPath))
+	writeLine("  SDK PATH override active: %s", yesNo(snapshot.PathOverride))
+	writeLine("")
+
+	if len(snapshot.Warnings) > 0 {
+		writeLine("Warnings")
+		for _, warning := range snapshot.Warnings {
+			writeLine("  - %s", warning)
+		}
+		writeLine("")
+	}
+
+	writeLine("Vfox SDKs")
+	writeLine("Name | Version | Current | Path")
+	writeLine("--- | --- | --- | ---")
+	if len(snapshot.VfoxSdks) == 0 {
+		writeLine("(none) |  |  | ")
+	} else {
+		for _, sdk := range snapshot.VfoxSdks {
+			details := sdk.Detail.Versions
+			if len(details) == 0 {
+				for _, version := range sdk.Versions {
+					details = append(details, SdkVersionDetail{
+						Version:   version.Version,
+						IsCurrent: version.Version != "" && version.Version == sdk.Detail.Current,
+					})
+				}
+			}
+			if len(details) == 0 {
+				writeLine("%s | (none) | no | ", tableCell(sdk.Name))
+			}
+			for _, version := range details {
+				current := "no"
+				if version.IsCurrent {
+					current = "yes"
+				}
+				path := strings.TrimSpace(sdk.VersionPaths[version.Version])
+				if path == "" && version.IsCurrent && sdk.ActiveCustomPath != "" {
+					path = sdk.ActiveCustomPath
+				}
+				writeLine("%s | %s | %s | %s", tableCell(sdk.Name), tableCell(version.Version), current, tableCell(path))
+			}
+		}
+	}
+	writeLine("")
+
+	writeLine("Custom SDKs")
+	writeCustomSdks(writeLine, snapshot.CustomSdks)
+	writeLine("")
+
+	writeLine("System SDKs")
+	writeLine("Name | Version | Executable")
+	writeLine("--- | --- | ---")
+	if len(snapshot.SystemSdks) == 0 {
+		writeLine("(none) |  | ")
+	} else {
+		for _, sdk := range snapshot.SystemSdks {
+			if len(sdk.Versions) == 0 {
+				writeLine("%s | (unknown) | %s", tableCell(sdk.Name), tableCell(sdk.Path))
+			}
+			for _, version := range sdk.Versions {
+				writeLine("%s | %s | %s", tableCell(sdk.Name), tableCell(emptyFallback(version.Version, "(unknown)")), tableCell(sdk.Path))
+			}
+		}
+	}
+	return b.String()
+}
+
+func writeCustomSdks(writeLine func(string, ...interface{}), customSdks map[string][]SdkInfo) {
+	writeLine("Name | Version | Path")
+	writeLine("--- | --- | ---")
+	if len(customSdks) == 0 {
+		writeLine("(none) |  | ")
+		return
+	}
+	names := make([]string, 0, len(customSdks))
+	for name := range customSdks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		list := append([]SdkInfo(nil), customSdks[name]...)
+		sort.Slice(list, func(i, j int) bool { return list[i].Path < list[j].Path })
+		if len(list) == 0 {
+			writeLine("%s | (none) | ", tableCell(name))
+			continue
+		}
+		for _, sdk := range list {
+			if len(sdk.Versions) == 0 {
+				writeLine("%s | (unknown) | %s", tableCell(name), tableCell(sdk.Path))
+				continue
+			}
+			for _, version := range sdk.Versions {
+				writeLine("%s | %s | %s", tableCell(name), tableCell(emptyFallback(version.Version, "(unknown)")), tableCell(sdk.Path))
+			}
+		}
+	}
+}
+
+func tableCell(value string) string {
+	value = strings.ReplaceAll(value, "\r", " ")
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "|", "/")
+	return strings.TrimSpace(value)
+}
+
+func isUnknownSdkVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	return version == "" || strings.EqualFold(version, "unknown") || strings.EqualFold(version, "(unknown)")
+}
+
+type sdkEnvironmentImportRow struct {
+	Kind    string
+	Name    string
+	Version string
+	Path    string
+	Current bool
+}
+
+func parseSdkEnvironmentImport(data string) ([]sdkEnvironmentImportRow, []string) {
+	lines := strings.Split(strings.ReplaceAll(data, "\r\n", "\n"), "\n")
+	section := ""
+	currentCustomName := ""
+	var rows []sdkEnvironmentImportRow
+	var warnings []string
+
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(strings.TrimRight(rawLine, "\r"))
+		if line == "" {
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		switch lower {
+		case "vfox sdks":
+			section = "vfox"
+			currentCustomName = ""
+			continue
+		case "custom sdks", "custom sdk paths":
+			section = "custom"
+			currentCustomName = ""
+			continue
+		case "system sdks":
+			section = "system"
+			currentCustomName = ""
+			continue
+		}
+
+		if parts, ok := parseExportTableLine(line); ok {
+			if len(parts) == 0 || isExportTableHeader(parts) {
+				continue
+			}
+			switch section {
+			case "vfox":
+				if len(parts) >= 2 && !strings.EqualFold(parts[0], "(none)") {
+					rows = append(rows, sdkEnvironmentImportRow{
+						Kind:    "vfox",
+						Name:    parts[0],
+						Version: parts[1],
+						Current: len(parts) >= 3 && strings.EqualFold(parts[2], "yes"),
+						Path:    tablePart(parts, 3),
+					})
+				}
+			case "custom":
+				if len(parts) >= 3 && !strings.EqualFold(parts[0], "(none)") {
+					rows = append(rows, sdkEnvironmentImportRow{
+						Kind:    "custom",
+						Name:    parts[0],
+						Version: parts[1],
+						Path:    parts[2],
+					})
+				}
+			}
+			continue
+		}
+
+		// Backward compatibility with older exports:
+		// Custom SDK Paths / "  golang" / "    - Path: ..." / "      Version: ..."
+		if section == "custom" {
+			if strings.HasPrefix(rawLine, "  ") && !strings.HasPrefix(rawLine, "    ") {
+				currentCustomName = line
+				continue
+			}
+			if strings.HasPrefix(line, "- Path:") && currentCustomName != "" {
+				rows = append(rows, sdkEnvironmentImportRow{
+					Kind: "custom",
+					Name: currentCustomName,
+					Path: strings.TrimSpace(strings.TrimPrefix(line, "- Path:")),
+				})
+				continue
+			}
+			if strings.HasPrefix(line, "Version:") && len(rows) > 0 && rows[len(rows)-1].Kind == "custom" && rows[len(rows)-1].Version == "" {
+				rows[len(rows)-1].Version = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+				continue
+			}
+		}
+
+		if section == "vfox" {
+			if strings.HasPrefix(rawLine, "  ") && !strings.HasPrefix(rawLine, "    ") {
+				currentCustomName = line
+				continue
+			}
+			if strings.HasPrefix(line, "- ") && currentCustomName != "" {
+				version := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+				version = strings.TrimSuffix(version, " (current)")
+				rows = append(rows, sdkEnvironmentImportRow{
+					Kind:    "vfox",
+					Name:    currentCustomName,
+					Version: strings.TrimSpace(version),
+					Current: strings.Contains(line, "(current)"),
+				})
+				continue
+			}
+		}
+	}
+
+	if len(rows) == 0 {
+		warnings = append(warnings, "No SDK rows were found in the selected text file.")
+	}
+	return rows, warnings
+}
+
+func parseExportTableLine(line string) ([]string, bool) {
+	if !strings.Contains(line, "|") {
+		return nil, false
+	}
+	parts := strings.Split(line, "|")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	if len(parts) == 0 {
+		return nil, false
+	}
+	return parts, true
+}
+
+func isExportTableHeader(parts []string) bool {
+	if len(parts) == 0 {
+		return true
+	}
+	first := strings.TrimSpace(parts[0])
+	if strings.EqualFold(first, "Name") {
+		return true
+	}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Trim(part, "- ") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func tablePart(parts []string, index int) string {
+	if index >= len(parts) {
+		return ""
+	}
+	return parts[index]
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
+}
+
+func emptyFallback(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func samePath(a string, b string) bool {
@@ -768,8 +1338,7 @@ func (a *App) RefreshAvailablePlugins() ([]PluginInfo, error) {
 			status := parts[1]
 			url := parts[2]
 
-			// ✓ (U+2713) or ✗ (U+2717)
-			isOfficial := status == "✓"
+			isOfficial := isOfficialPluginStatus(status)
 			plugins = append(plugins, PluginInfo{
 				Name:       name,
 				IsOfficial: isOfficial,
@@ -784,6 +1353,11 @@ func (a *App) RefreshAvailablePlugins() ([]PluginInfo, error) {
 	}
 
 	return a.applyIsAddedStatus(plugins), nil
+}
+
+func isOfficialPluginStatus(status string) bool {
+	status = strings.TrimSpace(status)
+	return status == "✓" || status == "√" || strings.EqualFold(status, "true") || strings.EqualFold(status, "yes")
 }
 
 // applyIsAddedStatus 根据已安装 SDK 列表，刷新可用插件数组的 IsAdded 字段
@@ -842,18 +1416,8 @@ func (a *App) GetSdkDetail(name string) (SdkDetail, error) {
 	detail := SdkDetail{Name: name, Current: currentVer}
 
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		line = strings.TrimRight(line, "\r")
-		if line == "" {
-			continue
-		}
-
-		ver := strings.TrimPrefix(line, "-> ")
-		isCurrent := strings.HasSuffix(ver, " <— current")
-		ver = strings.TrimSuffix(ver, " <— current")
-		ver = strings.TrimSpace(ver)
-
-		if ver == "" || strings.Contains(ver, "installed sdk") || strings.HasPrefix(ver, "custom-sys-") {
+		ver, isCurrent, ok := parseSdkDetailVersionLine(line)
+		if !ok {
 			continue
 		}
 
@@ -866,10 +1430,40 @@ func (a *App) GetSdkDetail(name string) (SdkDetail, error) {
 	return detail, nil
 }
 
+func parseSdkDetailVersionLine(line string) (version string, isCurrent bool, ok bool) {
+	line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+	if line == "" {
+		return "", false, false
+	}
+
+	if strings.HasPrefix(line, "->") {
+		isCurrent = true
+		line = strings.TrimSpace(strings.TrimPrefix(line, "->"))
+	}
+
+	for _, marker := range []string{"<-- current", "<— current", "<- current"} {
+		if strings.HasSuffix(line, marker) {
+			isCurrent = true
+			line = strings.TrimSpace(strings.TrimSuffix(line, marker))
+			break
+		}
+	}
+
+	if line == "" || strings.Contains(line, "installed sdk") || strings.HasPrefix(line, "custom-sys-") {
+		return "", false, false
+	}
+	return line, isCurrent, true
+}
+
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // UseVersion 切换到指定版本
 func (a *App) UseVersion(name, version string) (string, error) {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" || version == "" {
+		return "", fmt.Errorf("plugin name and version cannot be empty")
+	}
 	// 异步执行避免 RPC 卡住，前端通过 sdk-list-changed 事件感知完成
 	go func() {
 		// 使用 RunVfoxCommand 正常等待 vfox use 完成，因为我们已经在环境变量里伪装成了 cmd
@@ -881,7 +1475,7 @@ func (a *App) UseVersion(name, version string) (string, error) {
 		_, err := a.RunVfoxCommand("use", "--global", name+"@"+version)
 
 		if err != nil {
-			a.emitEvent("vfox-log", "[ERROR] "+err.Error())
+			a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
 		}
 		a.emitEvent("vfox-log", "[DONE]")
 		a.emitEvent("sdk-list-changed")
@@ -902,6 +1496,10 @@ func (a *App) getSdkRoot(exePath string) string {
 
 // removeJunctionIfExists removes a junction/directory if it exists.
 func (a *App) removeJunctionIfExists(linkPath string) {
+	linkPath = strings.TrimSpace(linkPath)
+	if linkPath == "" {
+		return
+	}
 	_ = os.RemoveAll(linkPath)
 }
 
@@ -913,6 +1511,10 @@ func (a *App) removeJunctionIfExists(linkPath string) {
 // 1. Clear vfox's current selection via `vfox unuse`
 // 2. Create a junction/symlink at ~/.vfox/sdks/{name} -> system SDK root
 func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("plugin name cannot be empty")
+	}
 	if err := validateSDKExecutablePath(exePath); err != nil {
 		return "", err
 	}
@@ -946,6 +1548,10 @@ func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
 
 // UnuseVersion 取消当前 SDK 的版本设置（异步，避免 RPC 阻塞）
 func (a *App) UnuseVersion(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("plugin name cannot be empty")
+	}
 	go func() {
 		// Clean up junction before unuse
 		sdkLinkPath := a.getVfoxHomePath("sdks", name)
@@ -953,7 +1559,7 @@ func (a *App) UnuseVersion(name string) (string, error) {
 
 		_, err := a.RunVfoxCommand("unuse", "--global", name)
 		if err != nil {
-			a.emitEvent("vfox-log", "[ERROR] "+err.Error())
+			a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
 		}
 		a.emitEvent("vfox-log", "[DONE]")
 		a.emitEvent("sdk-list-changed")
@@ -963,6 +1569,11 @@ func (a *App) UnuseVersion(name string) (string, error) {
 
 // InstallVersion 安装指定版本 (会耗时，并且会产生 vfox-log 进度事件)
 func (a *App) InstallVersion(name, version string) error {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" || version == "" {
+		return fmt.Errorf("plugin name and version cannot be empty")
+	}
 	return a.RunVfoxWithProgress([]string{"install", "-y", name + "@" + version})
 }
 
@@ -1069,11 +1680,21 @@ func (a *App) RemovePluginWithOptions(name string, keepCustomSdkPath string) (er
 
 // UninstallVersion 卸载指定版本
 func (a *App) UninstallVersion(name, version string) error {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" || version == "" {
+		return fmt.Errorf("plugin name and version cannot be empty")
+	}
 	return a.RunVfoxWithProgress([]string{"uninstall", name + "@" + version})
 }
 
 // GetVersionPath 获取指定版本的 SDK 绝对安装路径
 func (a *App) GetVersionPath(name, version string) (string, error) {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" || version == "" {
+		return "", fmt.Errorf("plugin name and version cannot be empty")
+	}
 	out, err := a.RunVfoxCommand("info", name+"@"+version)
 	if err != nil {
 		return "", err
@@ -1089,6 +1710,10 @@ func (a *App) GetVersionPath(name, version string) (string, error) {
 
 // SearchVersions 搜索 SDK 的可用版本，网络错误时返回空列表
 func (a *App) SearchVersions(name string) ([]string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return []string{}, fmt.Errorf("plugin name cannot be empty")
+	}
 	out, err := a.RunVfoxCommand("search", name)
 	if err != nil {
 		// search 可能因网络超时失败，返回空列表而非报错
@@ -1187,31 +1812,21 @@ func (a *App) ScanSystemSdks() {
 	if data, err := os.ReadFile(cacheFile); err == nil {
 		var cachedResult []SdkInfo
 		if err := json.Unmarshal(data, &cachedResult); err == nil && len(cachedResult) > 0 {
+			cachedResult = a.filterSystemSdks(cachedResult)
 			systemSdkCacheMu.Lock()
 			systemSdkCache = cachedResult
 			systemSdkCacheMu.Unlock()
-			a.emitEvent("system-sdks-ready")
+			if len(cachedResult) > 0 {
+				a.emitEvent("system-sdks-ready")
+			}
 		}
 	}
 
-	// Build a clean PATH that excludes .vfox entries, for child processes only.
+	// Build a clean PATH that excludes vfox-managed entries, for child processes only.
 	// IMPORTANT: Do NOT use os.Setenv here — it modifies global process state
 	// and races with concurrent goroutines (RunVfoxCommand, RunVfoxWithProgress, etc.).
 	originalPath := os.Getenv("PATH")
-	paths := filepath.SplitList(originalPath)
-	vfoxSdksDir := a.getVfoxHomePath("sdks")
-	var cleanPaths []string
-	for _, p := range paths {
-		pTrim := strings.TrimSpace(p)
-		if pTrim == "" {
-			continue
-		}
-		if vfoxSdksDir != "" && isPathWithin(pTrim, vfoxSdksDir) {
-			continue
-		}
-		cleanPaths = append(cleanPaths, pTrim)
-	}
-	cleanPathStr := strings.Join(cleanPaths, string(filepath.ListSeparator))
+	cleanPathStr := cleanPathValue(originalPath, a.vfoxManagedPathRoots())
 
 	// Build clean env slice for child processes
 	baseEnv := os.Environ()
@@ -1232,26 +1847,29 @@ func (a *App) ScanSystemSdks() {
 		wg.Add(1)
 		go func(d systemSDKDef) {
 			defer wg.Done()
-			exePath := findExecutable(d.Exe, cleanEnv)
-			if exePath == "" {
+			for _, exePath := range findExecutableCandidates(d.Exe, cleanEnv) {
+				if exePath == "" || a.isVfoxManagedPath(exePath) {
+					continue
+				}
+				ver := a.tryGetVersionWithEnv(exePath, d.VerArgs, cleanEnv)
+				if ver == "" || !isUsableSystemVersion(ver) {
+					continue
+				}
+				mu.Lock()
+				result = append(result, SdkInfo{
+					Name:     d.Name,
+					Source:   "system",
+					Path:     exePath,
+					Versions: []SdkVersion{{Version: ver}},
+				})
+				mu.Unlock()
 				return
 			}
-
-			ver := a.tryGetVersionWithEnv(d.Exe, d.VerArgs, cleanEnv)
-			if ver == "" {
-				ver = "unknown"
-			}
-			mu.Lock()
-			result = append(result, SdkInfo{
-				Name:     d.Name,
-				Source:   "system",
-				Path:     exePath,
-				Versions: []SdkVersion{{Version: ver}},
-			})
-			mu.Unlock()
 		}(def)
 	}
 	wg.Wait()
+
+	result = a.filterSystemSdks(result)
 
 	systemSdkCacheMu.Lock()
 	systemSdkCache = result
@@ -1261,6 +1879,49 @@ func (a *App) ScanSystemSdks() {
 	_ = a.writeJSONFile(cacheFile, result)
 
 	a.emitEvent("system-sdks-ready")
+}
+
+func (a *App) filterSystemSdks(sdks []SdkInfo) []SdkInfo {
+	result := make([]SdkInfo, 0, len(sdks))
+	for _, sdk := range sdks {
+		if a.isVfoxManagedPath(sdk.Path) {
+			continue
+		}
+		versions := make([]SdkVersion, 0, len(sdk.Versions))
+		for _, version := range sdk.Versions {
+			if isUsableSystemVersion(version.Version) {
+				versions = append(versions, version)
+			}
+		}
+		if len(versions) == 0 {
+			continue
+		}
+		sdk.Versions = versions
+		result = append(result, sdk)
+	}
+	return result
+}
+
+func isUsableSystemVersion(version string) bool {
+	version = strings.TrimSpace(version)
+	if version == "" || strings.EqualFold(version, "unknown") {
+		return false
+	}
+	lower := strings.ToLower(version)
+	badFragments := []string{
+		"vfoxg:",
+		"not available under",
+		"not found",
+		"not recognized",
+		"run without arguments to install",
+		"access is denied",
+	}
+	for _, fragment := range badFragments {
+		if strings.Contains(lower, fragment) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetNonVfoxSdksMap returns the persisted map of custom SDKs
@@ -1285,8 +1946,9 @@ func (a *App) GetNonVfoxSdks() map[string][]SdkInfo {
 
 // DetectSdkPathVersion tries to extract version from a given custom sdk path
 func (a *App) DetectSdkPathVersion(name string, exePath string) string {
+	name = strings.TrimSpace(name)
 	exePath = strings.TrimSpace(exePath)
-	if exePath == "" {
+	if name == "" || exePath == "" {
 		return "unknown"
 	}
 	for _, def := range systemSDKDefs {
@@ -1303,6 +1965,10 @@ func (a *App) DetectSdkPathVersion(name string, exePath string) string {
 
 // AddNonVfoxSdk allows manual registration of a non-vfox SDK path
 func (a *App) AddNonVfoxSdk(name string, exePath string, version string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
 	exePath = strings.TrimSpace(exePath)
 	if err := validateSDKExecutablePath(exePath); err != nil {
 		return err
@@ -1318,7 +1984,7 @@ func (a *App) AddNonVfoxSdk(name string, exePath string, version string) error {
 	m := a.GetNonVfoxSdksMap()
 	list := m[name]
 	for _, existing := range list {
-		if strings.EqualFold(filepath.Clean(existing.Path), filepath.Clean(exePath)) {
+		if samePath(existing.Path, exePath) {
 			return fmt.Errorf("path already exists")
 		}
 	}
@@ -1333,16 +1999,21 @@ func (a *App) AddNonVfoxSdk(name string, exePath string, version string) error {
 
 // RemoveNonVfoxSdk removes a custom path from the non-vfox list
 func (a *App) RemoveNonVfoxSdk(name string, exePath string) error {
+	name = strings.TrimSpace(name)
+	exePath = strings.TrimSpace(exePath)
+	if name == "" || exePath == "" {
+		return fmt.Errorf("plugin name and path cannot be empty")
+	}
 	m := a.GetNonVfoxSdksMap()
 	list := m[name]
 	var newList []SdkInfo
 	for _, existing := range list {
-		if existing.Path != exePath {
+		if !samePath(existing.Path, exePath) {
 			newList = append(newList, existing)
 		} else {
 			// Only remove the sdk symlink if it currently points to the SDK being removed
 			activePath, _ := a.GetActiveCustomSdk(name)
-			if strings.EqualFold(filepath.Clean(activePath), filepath.Clean(exePath)) {
+			if samePath(activePath, exePath) {
 				sdkLinkPath := a.getVfoxHomePath("sdks", name)
 				a.removeJunctionIfExists(sdkLinkPath)
 			}
@@ -1374,7 +2045,10 @@ func (a *App) tryGetVersionWithEnv(exe string, args []string, env []string) stri
 	if env != nil {
 		cmd.Env = env
 	}
-	out, _ := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
 	if len(out) == 0 {
 		return ""
 	}
@@ -1386,6 +2060,7 @@ func extractVersion(raw string, exe string) string {
 	clean, _, _ = strings.Cut(clean, "\n")
 	clean = strings.TrimRight(clean, "\r")
 	clean = strings.TrimSpace(clean)
+	exe = normalizeExecutableName(exe)
 
 	switch exe {
 	case "python":
@@ -1445,6 +2120,20 @@ func extractVersion(raw string, exe string) string {
 }
 
 // GetAllSdks 合并 vfox SDK（实时）和系统自动检测 SDK（缓存），去重返回
+func normalizeExecutableName(exe string) string {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(exe)))
+	for _, suffix := range []string{".exe", ".cmd", ".bat", ".com"} {
+		name = strings.TrimSuffix(name, suffix)
+	}
+	switch name {
+	case "pythonw", "python3", "python3w":
+		return "python"
+	case "nodejs":
+		return "node"
+	}
+	return name
+}
+
 func (a *App) GetAllSdks() ([]SdkInfo, error) {
 	vfoxSdks, err := a.GetInstalledSdks()
 	if err != nil {
@@ -1545,6 +2234,10 @@ func coreArchName() string {
 // GetActiveCustomSdk reads the junction target. If it points outside the configured
 // VFOX_HOME, it's a Custom SDK and returns the path.
 func (a *App) GetActiveCustomSdk(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("plugin name cannot be empty")
+	}
 	sdkLinkPath := a.getVfoxHomePath("sdks", name)
 	if sdkLinkPath == "" {
 		return "", fmt.Errorf("unable to resolve vfox home directory")
@@ -1564,8 +2257,8 @@ func (a *App) GetActiveCustomSdk(name string) (string, error) {
 			if !filepath.IsAbs(target) {
 				target = filepath.Join(filepath.Dir(sdkLinkPath), target)
 			}
-			// Targets under VFOX_HOME are managed by vfox, not user-provided SDKs.
-			if isPathWithin(target, a.getVfoxHome()) {
+			// Targets under any managed vfox root are not user-provided SDKs.
+			if a.isVfoxManagedPath(target) {
 				return "", nil
 			}
 			// Try to find matching SDK path

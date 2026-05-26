@@ -1226,6 +1226,25 @@ hr {
   width: 100%;
 }
 
+.sdk-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sdk-list-header h2 {
+  margin: 0;
+}
+
+.sdk-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* Forward animation (List -> Detail) */
 .fade-slide-forward-enter-active,
 .fade-slide-forward-leave-active {
@@ -1289,6 +1308,15 @@ hr {
   font-size: 18px;
 }
 
+.sdk-card-content {
+  min-width: 0;
+}
+
+.sdk-card-content h3,
+.detail-title-text h1 {
+  overflow-wrap: anywhere;
+}
+
 .detail-view {
   background-color: var(--md-surface);
   border-radius: 16px;
@@ -1311,6 +1339,7 @@ hr {
   display: flex;
   align-items: center;
   gap: 20px;
+  min-width: 0;
 }
 
 .sdk-icon-huge {
@@ -1324,6 +1353,11 @@ hr {
   margin: 0 0 8px 0;
   font-size: 32px;
   line-height: 1.1;
+  min-width: 0;
+}
+
+.detail-title-text {
+  min-width: 0;
 }
 
 .source-badge {
@@ -2074,6 +2108,85 @@ nav {
     left: 112px;
     right: 16px;
     min-width: 0;
+    max-width: none;
+  }
+
+  .sdk-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-title-area {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .detail-title-area > div {
+    width: 100%;
+  }
+
+  .detail-title-text h1 {
+    font-size: 26px;
+  }
+
+  .sdk-icon-huge {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+  }
+
+  .plugin-actions {
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .terminal-header {
+    padding: 0 12px 0 14px;
+  }
+
+  .terminal-body {
+    padding-inline: 12px;
+  }
+
+  .terminal-line {
+    grid-template-columns: 60px 12px minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
+@media (max-width: 640px) {
+  .task-toast {
+    left: 96px;
+    top: 16px;
+    right: 12px;
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .task-toast .toast-title,
+  .task-toast .toast-subtitle {
+    white-space: normal;
+  }
+
+  .detail-header {
+    padding: 18px;
+  }
+
+  .detail-body {
+    padding: 20px 18px;
+  }
+
+  .terminal-dock {
+    height: 200px;
+  }
+
+  .terminal-title {
+    gap: 6px;
+  }
+
+  .terminal-count {
+    min-width: 18px;
   }
 }
 

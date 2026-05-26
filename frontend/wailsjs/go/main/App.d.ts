@@ -18,6 +18,8 @@ export function CheckWin11CompatMode():Promise<boolean>;
 
 export function DetectSdkPathVersion(arg1:string,arg2:string):Promise<string>;
 
+export function ExportCurrentEnvironmentSdks():Promise<string>;
+
 export function GetActiveCustomSdk(arg1:string):Promise<string>;
 
 export function GetAddedPlugins():Promise<Array<string>>;
@@ -47,6 +49,8 @@ export function HijackPluginSystemPath(arg1:string):Promise<void>;
 export function HijackSystemPath(arg1:string,arg2:string):Promise<void>;
 
 export function InstallVersion(arg1:string,arg2:string):Promise<void>;
+
+export function ImportSdkEnvironmentFromTxt():Promise<main.SdkEnvironmentImportResult>;
 
 export function RefreshAvailablePlugins():Promise<Array<main.PluginInfo>>;
 

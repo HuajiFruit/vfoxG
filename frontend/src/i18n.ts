@@ -191,6 +191,12 @@ const en: TranslationDict = {
   'sdk.search_error': 'Failed to search versions for {name}.',
   'sdk.path.copied': 'Path copied to clipboard.',
   'sdk.path.copy_error': 'Failed to copy path.',
+  'sdk.export': 'Export SDKs',
+  'sdk.export.success': 'SDK environment exported to {path}.',
+  'sdk.export.error': 'Failed to export SDK environment.',
+  'sdk.import': 'Import TXT',
+  'sdk.import.success': 'Imported {imported} custom SDK path(s), skipped {skipped}. Vfox SDK row(s) found: {vfox}.',
+  'sdk.import.error': 'Failed to import SDK environment.',
 
   // View text
   'market.official': 'Official Plugins',
@@ -384,6 +390,12 @@ const zh: TranslationDict = {
   'sdk.search_error': '搜索 {name} 版本失败。',
   'sdk.path.copied': '路径已复制到剪贴板。',
   'sdk.path.copy_error': '复制路径失败。',
+  'sdk.export': '导出 SDK',
+  'sdk.export.success': 'SDK 环境已导出到 {path}。',
+  'sdk.export.error': '导出 SDK 环境失败。',
+  'sdk.import': '导入 TXT',
+  'sdk.import.success': '已导入 {imported} 个自定义 SDK 路径，跳过 {skipped} 个。发现 vfox SDK 记录 {vfox} 条。',
+  'sdk.import.error': '导入 SDK 环境失败。',
 
   // View text
   'market.official': '官方插件',

@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePluginWithOptions, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginPathOverride, GetActiveCustomSdk, GetPlatformInfo } from '../../wailsjs/go/main/App';
+import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePluginWithOptions, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginPathOverride, GetActiveCustomSdk, GetPlatformInfo, ExportCurrentEnvironmentSdks, ImportSdkEnvironmentFromTxt } from '../../wailsjs/go/main/App';
 import { EventsOn, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
 import PluginIcon from './PluginIcon.vue';
@@ -24,12 +24,18 @@ const detailError = ref<Record<string, boolean>>({});
 const activeView = ref<'list' | 'detail'>('list');
 const transitionName = ref('fade-slide-forward');
 const selectedSdk = ref<main.SdkInfo | null>(null);
-const versionPaths = ref<Record<string, string>>({});
+const versionPaths = ref<Record<string, Record<string, string>>>({});
 const usingVersion = ref<string | null>(null);
+const exportingSdks = ref(false);
+const importingSdks = ref(false);
 
 const removingPlugin = ref<string | null>(null);
 
 const emit = defineEmits(['start-task', 'notify']);
+let sdksFetchSeq = 0;
+let detailFetchSeq = 0;
+let compatFetchSeq = 0;
+let detailResetTimer: ReturnType<typeof setTimeout> | null = null;
 
 const getErrorMessage = (err: unknown, fallback: string) => {
   if (err instanceof Error && err.message) return err.message;
@@ -47,6 +53,13 @@ const notifySuccess = (message: string, title = t('common.success')) => {
 
 const notifyInfo = (message: string, title = t('common.notification')) => {
   emit('notify', { type: 'info', title, message });
+};
+
+const clearDetailResetTimer = () => {
+  if (detailResetTimer !== null) {
+    clearTimeout(detailResetTimer);
+    detailResetTimer = null;
+  }
 };
 
 const vfoxSdks = computed(() => sdks.value.filter(s => s.source === 'vfox'));
@@ -84,7 +97,7 @@ const unifiedVersions = computed<UnifiedVersion[]>(() => {
       versions.push({
         isCustom: false,
         version: v.version,
-        path: versionPaths.value[v.version] || '',
+        path: versionPaths.value[selectedSdk.value.name]?.[v.version] || '',
         isCurrent: v.isCurrent,
         vfoxVersion: v.version
       });
@@ -157,12 +170,6 @@ const handleUseCustomPath = async (name: string, path: string) => {
   emit('start-task', t('task.custom.use', { name, path }));
   usingVersion.value = path;
   try {
-    activeCustomSdk.value = path;
-    const detail = sdkDetails.value[name];
-    if (detail) {
-      detail.current = '';
-      detail.versions.forEach(v => { v.isCurrent = false; });
-    }
     const result = await UseCustomSdk(name, path);
     if (result !== 'ok') {
       notifyError(t('sdk.custom.apply_error'));
@@ -211,13 +218,56 @@ const fetchVfoxSdks = async () => {
 };
 
 const fetchAllSdks = async () => {
+  const requestId = ++sdksFetchSeq;
   loading.value = true;
   try {
-    sdks.value = await GetAllSdks();
+    const all = await GetAllSdks();
+    if (requestId !== sdksFetchSeq) return;
+    sdks.value = all;
   } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.load_error')));
+    if (requestId === sdksFetchSeq) {
+      notifyError(getErrorMessage(err, t('sdk.load_error')));
+    }
   } finally {
-    loading.value = false;
+    if (requestId === sdksFetchSeq) {
+      loading.value = false;
+    }
+  }
+};
+
+const handleExportSdks = async () => {
+  exportingSdks.value = true;
+  try {
+    const path = await ExportCurrentEnvironmentSdks();
+    if (path) {
+      notifySuccess(t('sdk.export.success', { path }));
+    }
+  } catch (err) {
+    notifyError(getErrorMessage(err, t('sdk.export.error')));
+  } finally {
+    exportingSdks.value = false;
+  }
+};
+
+const handleImportSdks = async () => {
+  importingSdks.value = true;
+  try {
+    const result = await ImportSdkEnvironmentFromTxt();
+    if (result?.path) {
+      await fetchAllSdks();
+      nonVfoxSdksMap.value = await GetNonVfoxSdks();
+      const message = t('sdk.import.success', {
+        imported: result.importedCustomSdks ?? 0,
+        skipped: result.skippedCustomSdks ?? 0,
+        vfox: result.vfoxSdksFound ?? 0,
+      });
+      const warningText = result.warnings?.length ? ` ${result.warnings.join(' ')}` : '';
+      notifySuccess(`${message}${warningText}`);
+    }
+  } catch (err) {
+    notifyError(getErrorMessage(err, t('sdk.import.error')));
+  } finally {
+    importingSdks.value = false;
   }
 };
 
@@ -254,34 +304,43 @@ onUnmounted(() => {
   if (systemReadyOff) systemReadyOff();
 });
 
-const fetchDetail = async (name: string) => {
+const fetchDetail = async (name: string, requestId = ++detailFetchSeq) => {
   detailError.value[name] = false;
   try {
     const detail = await GetSdkDetail(name);
+    if (requestId !== detailFetchSeq) return;
     sdkDetails.value[name] = detail;
   } catch (err) {
-    detailError.value[name] = true;
-    notifyError(getErrorMessage(err, t('sdk.detail_error', { name })));
+    if (requestId === detailFetchSeq) {
+      detailError.value[name] = true;
+      notifyError(getErrorMessage(err, t('sdk.detail_error', { name })));
+    }
   }
 };
 
 const openDetail = async (sdk: main.SdkInfo) => {
+  clearDetailResetTimer();
+  const requestId = ++detailFetchSeq;
   selectedSdk.value = sdk;
   transitionName.value = 'fade-slide-forward';
   activeView.value = 'detail';
-  versionPaths.value = {};
+  versionPaths.value[sdk.name] = {};
 
   // 统一尝试拉取 vfox 详情（有 plugin 安装的才能拉到）
-  await fetchDetail(sdk.name);
+  await fetchDetail(sdk.name, requestId);
+  if (requestId !== detailFetchSeq || selectedSdk.value?.name !== sdk.name) return;
   if (sdkDetails.value[sdk.name]?.versions) {
-    sdkDetails.value[sdk.name].versions.forEach(async (v) => {
+    for (const v of sdkDetails.value[sdk.name].versions) {
       try {
         const path = await GetVersionPath(sdk.name, v.version);
-        versionPaths.value[v.version] = path;
+        if (requestId !== detailFetchSeq || selectedSdk.value?.name !== sdk.name) return;
+        versionPaths.value[sdk.name][v.version] = path;
       } catch(e) {
-        notifyError(getErrorMessage(e, t('sdk.path.load_error', { name: sdk.name, version: v.version })));
+        if (requestId === detailFetchSeq) {
+          notifyError(getErrorMessage(e, t('sdk.path.load_error', { name: sdk.name, version: v.version })));
+        }
       }
-    });
+    }
   }
 
   // 拉取 non-vfox custom paths
@@ -328,14 +387,22 @@ const loadPlatformInfo = async () => {
 };
 
 const checkCompatMode = async (name: string) => {
+  const requestId = ++compatFetchSeq;
   checkingCompat.value = true;
   try {
-    isPathOverrideApplied.value = await CheckPluginPathOverride(name);
-    activeCustomSdk.value = await GetActiveCustomSdk(name);
+    const applied = await CheckPluginPathOverride(name);
+    const activeSdk = await GetActiveCustomSdk(name);
+    if (requestId !== compatFetchSeq || selectedSdk.value?.name !== name) return;
+    isPathOverrideApplied.value = applied;
+    activeCustomSdk.value = activeSdk;
   } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.path_override.check_error', { name })));
+    if (requestId === compatFetchSeq && selectedSdk.value?.name === name) {
+      notifyError(getErrorMessage(err, t('sdk.path_override.check_error', { name })));
+    }
   } finally {
-    checkingCompat.value = false;
+    if (requestId === compatFetchSeq) {
+      checkingCompat.value = false;
+    }
   }
 };
 
@@ -366,13 +433,17 @@ const handleRestorePlugin = async (name: string) => {
 };
 
 const closeDetail = () => {
+  clearDetailResetTimer();
+  ++detailFetchSeq;
+  ++compatFetchSeq;
   transitionName.value = 'fade-slide-backward';
   activeView.value = 'list';
-  setTimeout(() => {
+  detailResetTimer = setTimeout(() => {
     selectedSdk.value = null;
     searchingFor.value = null;
     searchResults.value = [];
     searchQuery.value = '';
+    detailResetTimer = null;
   }, 300);
 };
 
@@ -380,13 +451,6 @@ const handleUse = async (name: string, version: string) => {
   emit('start-task', t('task.version.switch', { name, version }));
   usingVersion.value = version;
   try {
-    // 乐观更新：立即标记当前版本
-    const detail = sdkDetails.value[name];
-    if (detail) {
-      detail.current = version;
-      detail.versions.forEach(v => { v.isCurrent = v.version === version; });
-    }
-    activeCustomSdk.value = '';
     await UseVersion(name, version);
     // UseVersion 异步执行，由 sdk-list-changed 事件触发刷新
   } catch (err) {
@@ -399,13 +463,6 @@ const handleUse = async (name: string, version: string) => {
 const handleUnuse = async (name: string) => {
   emit('start-task', t('task.version.unset', { name }));
   try {
-    // 乐观更新：立即清除 current 状态
-    const detail = sdkDetails.value[name];
-    if (detail) {
-      detail.current = '';
-      detail.versions.forEach(v => { v.isCurrent = false; });
-    }
-    activeCustomSdk.value = '';
     await UnuseVersion(name);
     // UnuseVersion 异步执行，由 sdk-list-changed 事件触发刷新
   } catch (err) {
@@ -417,12 +474,13 @@ const handleInstall = async (name: string, version: string) => {
   emit('start-task', t('task.version.install', { name, version }));
   try {
     await InstallVersion(name, version);
-    await fetchDetail(name);
+    await fetchDetail(name, ++detailFetchSeq);
     await fetchVfoxSdks();
     
     // Fetch path for newly installed version
     const newPath = await GetVersionPath(name, version);
-    versionPaths.value[version] = newPath;
+    versionPaths.value[name] ||= {};
+    versionPaths.value[name][version] = newPath;
     
     if (searchingFor.value === name) {
       searchResults.value = [];
@@ -471,9 +529,15 @@ const executeConfirm = async () => {
         await handleUnuse(name);
       }
       await UninstallVersion(name, version);
-      await fetchDetail(name);
+      await fetchDetail(name, ++detailFetchSeq);
       await fetchVfoxSdks();
-      delete versionPaths.value[version];
+      const paths = versionPaths.value[name];
+      if (paths) {
+        delete paths[version];
+        if (Object.keys(paths).length === 0) {
+          delete versionPaths.value[name];
+        }
+      }
     } catch (err) {
       notifyError(getErrorMessage(err, t('sdk.uninstall_error', { name, version })));
     }
@@ -559,7 +623,25 @@ const toggleExpand = (id: string) => {
     <!-- MAIN VIEW (LIST) -->
     <Transition :name="transitionName" mode="out-in">
       <div v-if="activeView === 'list'" key="list" class="view-container">
-        <h2>{{ t('sdk.installed.title') }}</h2>
+        <div class="sdk-list-header">
+          <h2>{{ t('sdk.installed.title') }}</h2>
+          <div class="sdk-list-actions">
+            <button class="btn tonal small" :disabled="importingSdks || exportingSdks" @click="handleImportSdks">
+              <div v-if="importingSdks" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+              <template v-else>
+                <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">upload_file</span>
+                {{ t('sdk.import') }}
+              </template>
+            </button>
+            <button class="btn tonal small" :disabled="exportingSdks || importingSdks" @click="handleExportSdks">
+              <div v-if="exportingSdks" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+              <template v-else>
+                <span class="material-symbols-outlined" style="font-size: 16px; margin-right: 4px;">download</span>
+                {{ t('sdk.export') }}
+              </template>
+            </button>
+          </div>
+        </div>
         
         <div v-if="loading" class="flex-center" style="height: 200px;">
           <div class="spinner"></div>
