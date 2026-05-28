@@ -1,11 +1,11 @@
 export namespace main {
-	
+
 	export class DownloadPathInfo {
 	    path: string;
 	    defaultPath: string;
 	    isDefault: boolean;
 	    hasMigratableData: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new DownloadPathInfo(source);
 	    }
@@ -188,4 +188,6 @@ export namespace main {
 		    return a;
 		}
 	}
+
+
 }

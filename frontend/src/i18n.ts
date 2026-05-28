@@ -154,6 +154,10 @@ const en: TranslationDict = {
   'toast.starting': 'Starting...',
   'toast.completed': 'Completed successfully!',
   'toast.task_failed': 'Task failed.',
+  'toast.please_wait': 'Please wait',
+  'toast.phase.download': 'Downloading',
+  'toast.phase.install': 'Installing',
+  'toast.installing_after_download': 'Download complete, installing...',
   'task.plugin.add': 'Adding plugin: {name}',
   'task.plugin.remove': 'Removing plugin: {name}',
   'task.version.install': 'Installing {name}@{version}',
@@ -161,6 +165,7 @@ const en: TranslationDict = {
   'task.version.switch': 'Switching {name} to {version}',
   'task.version.unset': 'Unsetting {name}',
   'task.custom.use': 'Using {name} ({path})',
+  'task.sdk.import': 'Importing SDK environment',
 
   // Operation messages
   'settings.platform.load_error': 'Failed to load platform information.',
@@ -374,6 +379,10 @@ const zh: TranslationDict = {
   'toast.starting': '正在开始...',
   'toast.completed': '已成功完成！',
   'toast.task_failed': '任务失败。',
+  'toast.please_wait': '请稍后',
+  'toast.phase.download': '下载中',
+  'toast.phase.install': '安装中',
+  'toast.installing_after_download': '下载完成，正在安装...',
   'task.plugin.add': '正在添加插件：{name}',
   'task.plugin.remove': '正在移除插件：{name}',
   'task.version.install': '正在安装 {name}@{version}',
@@ -381,6 +390,7 @@ const zh: TranslationDict = {
   'task.version.switch': '正在将 {name} 切换到 {version}',
   'task.version.unset': '正在取消使用 {name}',
   'task.custom.use': '正在使用 {name}（{path}）',
+  'task.sdk.import': '正在导入 SDK 环境',
 
   // Operation messages
   'settings.platform.load_error': '加载平台信息失败。',

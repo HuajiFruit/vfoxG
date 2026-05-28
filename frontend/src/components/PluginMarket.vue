@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue';
 import { GetAvailablePlugins, RefreshAvailablePlugins, RunVfoxWithProgress, SearchVersions, GetSdkDetail, InstallVersion, RemovePluginWithOptions, GetAddedPlugins, ScanSystemSdks, GetCachedSystemSdks, DetectSdkPathVersion, AddNonVfoxSdk, UseCustomSdk, HijackSystemPath, GetNonVfoxSdks } from '../../wailsjs/go/main/App';
 import { BrowserOpenURL, EventsOn } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
@@ -33,6 +33,8 @@ let detailResetTimer: ReturnType<typeof setTimeout> | null = null;
 let offVfoxHomeChanged: (() => void) | null = null;
 
 const emit = defineEmits(['start-task', 'notify']);
+type RunTerminalTask = (title: string, task: () => Promise<void>) => Promise<boolean>;
+const runTerminalTask = inject<RunTerminalTask>('runTerminalTask');
 
 const getErrorMessage = (err: unknown, fallback: string) => {
   if (err instanceof Error && err.message) return err.message;
@@ -42,6 +44,29 @@ const getErrorMessage = (err: unknown, fallback: string) => {
 
 const notifyError = (message: string, title = t('common.error')) => {
   emit('notify', { type: 'error', title, message });
+};
+
+const notifyInfo = (message: string, title = t('common.notification')) => {
+  emit('notify', { type: 'info', title, message });
+};
+
+const runTask = async (title: string, task: () => Promise<void>) => {
+  if (runTerminalTask) {
+    return runTerminalTask(title, task);
+  }
+  emit('start-task', title);
+  await task();
+  return true;
+};
+
+const isBusyError = (err: unknown) => getErrorMessage(err, '').toLowerCase().includes('another terminal task is already running');
+
+const notifyTaskError = (err: unknown, fallback: string) => {
+  if (isBusyError(err)) {
+    notifyInfo(t('toast.please_wait'));
+    return;
+  }
+  notifyError(getErrorMessage(err, fallback));
 };
 
 const clearDetailResetTimer = () => {
@@ -177,34 +202,35 @@ const closeDetail = () => {
 };
 
 const addPlugin = async (name: string) => {
-  emit('start-task', t('task.plugin.add', { name }));
   addingPlugin.value = name;
   try {
-    await RunVfoxWithProgress(['add', name]);
-    await fetchPlugins(); // This will also update selectedPlugin.isAdded
-    
-    // Auto-add and use system SDK if it exists
-    try {
-      const systemSdks = await GetCachedSystemSdks();
-      const matchingSdk = systemSdks?.find(s => s.name === name);
-      if (matchingSdk && matchingSdk.path) {
-        const version = await DetectSdkPathVersion(name, matchingSdk.path);
-        await AddNonVfoxSdk(name, matchingSdk.path, version || 'unknown');
-        await UseCustomSdk(name, matchingSdk.path);
-        // Hijack the original system path to fulfill the aggressive unset behavior requirement
-        await HijackSystemPath(name, matchingSdk.path);
-      }
-    } catch (e) {
-      notifyError(getErrorMessage(e, t('market.add_auto_link_error', { name })));
-    }
+    await runTask(t('task.plugin.add', { name }), async () => {
+      await RunVfoxWithProgress(['add', name]);
+      await fetchPlugins(); // This will also update selectedPlugin.isAdded
 
-    ScanSystemSdks(); // Update system SDK cache in background
-    
-    if (selectedPlugin.value && selectedPlugin.value.name === name) {
-      await fetchPluginVersions(name);
-    }
+      // Auto-add and use system SDK if it exists
+      try {
+        const systemSdks = await GetCachedSystemSdks();
+        const matchingSdk = systemSdks?.find(s => s.name === name);
+        if (matchingSdk && matchingSdk.path) {
+          const version = await DetectSdkPathVersion(name, matchingSdk.path);
+          await AddNonVfoxSdk(name, matchingSdk.path, version || 'unknown');
+          await UseCustomSdk(name, matchingSdk.path);
+          // Hijack the original system path to fulfill the aggressive unset behavior requirement
+          await HijackSystemPath(name, matchingSdk.path);
+        }
+      } catch (e) {
+        notifyError(getErrorMessage(e, t('market.add_auto_link_error', { name })));
+      }
+
+      ScanSystemSdks(); // Update system SDK cache in background
+
+      if (selectedPlugin.value && selectedPlugin.value.name === name) {
+        await fetchPluginVersions(name);
+      }
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('market.add_error', { name })));
+    notifyTaskError(err, t('market.add_error', { name }));
   } finally {
     if (addingPlugin.value === name) {
       addingPlugin.value = null;
@@ -236,31 +262,33 @@ const executeRemovePlugin = async (chosenPath: string | null) => {
   const name = confirmRemove.value;
   confirmRemove.value = null;
   
-  emit('start-task', t('task.plugin.remove', { name }));
   removingPlugin.value = name;
   try {
-    await RemovePluginWithOptions(name, chosenPath || '');
-    await fetchPlugins();
-    ScanSystemSdks();
+    await runTask(t('task.plugin.remove', { name }), async () => {
+      await RemovePluginWithOptions(name, chosenPath || '');
+      await fetchPlugins();
+      ScanSystemSdks();
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('market.remove_error', { name })));
+    notifyTaskError(err, t('market.remove_error', { name }));
   } finally {
     removingPlugin.value = null;
   }
 };
 
 const installVersion = async (pluginName: string, version: string) => {
-  emit('start-task', t('task.version.install', { name: pluginName, version }));
   installingVersion.value = version;
   try {
-    await InstallVersion(pluginName, version);
-    await fetchPlugins();
-    if (selectedPlugin.value && selectedPlugin.value.name === pluginName) {
-      await fetchPluginVersions(pluginName);
-    }
-    installedVersions.value.add(version);
+    await runTask(t('task.version.install', { name: pluginName, version }), async () => {
+      await InstallVersion(pluginName, version);
+      await fetchPlugins();
+      if (selectedPlugin.value && selectedPlugin.value.name === pluginName) {
+        await fetchPluginVersions(pluginName);
+      }
+      installedVersions.value.add(version);
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('market.install_error', { name: pluginName, version })));
+    notifyTaskError(err, t('market.install_error', { name: pluginName, version }));
   } finally {
     if (installingVersion.value === version) {
       installingVersion.value = null;

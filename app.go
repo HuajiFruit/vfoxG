@@ -22,9 +22,11 @@ import (
 
 // App struct
 type App struct {
-	ctx      context.Context
-	homeMu   sync.RWMutex
-	vfoxHome string
+	ctx           context.Context
+	homeMu        sync.RWMutex
+	vfoxHome      string
+	vfoxTaskMutex sync.Mutex
+	vfoxTaskBusy  bool
 }
 
 // NewApp creates a new App application struct
@@ -157,6 +159,32 @@ func isPathWithin(path string, root string) bool {
 
 // RunVfoxCommand 执行短生命周期的 vfox 命令，带 15s 超时防止前端卡死
 func (a *App) RunVfoxCommand(args ...string) (string, error) {
+	if !isExclusiveVfoxCommand(args) {
+		return a.runVfoxCommand(args...)
+	}
+
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return "", err
+	}
+	defer releaseTask()
+	return a.runVfoxCommand(args...)
+}
+
+func isExclusiveVfoxCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "add", "install", "remove", "uninstall", "use", "unuse":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) runVfoxCommand(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -187,8 +215,41 @@ func (a *App) RunVfoxCommand(args ...string) (string, error) {
 	return cleanOut, nil
 }
 
+func (a *App) getVersionPathUnlocked(name, version string) (string, error) {
+	out, err := a.runVfoxCommand("info", name+"@"+version)
+	if err != nil {
+		return "", err
+	}
+
+	// vfox info 的最后一行或者非空行即为路径。通常情况下输出的就是绝对路径。
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) > 0 {
+		return strings.TrimSpace(lines[len(lines)-1]), nil
+	}
+	return "", nil
+}
+
+func (a *App) getInstalledSdksUnlocked() ([]SdkInfo, error) {
+	out, err := a.runVfoxCommand("ls")
+	if err != nil {
+		return nil, err
+	}
+
+	return parseInstalledSdksOutput(out), nil
+}
+
 // RunVfoxWithProgress 执行长耗时的 vfox 命令，将输出流实时发送到前端
 func (a *App) RunVfoxWithProgress(args []string) error {
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return err
+	}
+	defer releaseTask()
+	return a.runVfoxWithProgress(args)
+}
+
+func (a *App) runVfoxWithProgress(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -319,6 +380,22 @@ func (a *App) RunVfoxWithProgress(args []string) error {
 
 	a.emitEvent("vfox-log", "[DONE]")
 	return nil
+}
+
+func (a *App) tryStartVfoxTask() (func(), error) {
+	a.vfoxTaskMutex.Lock()
+	if a.vfoxTaskBusy {
+		a.vfoxTaskMutex.Unlock()
+		return nil, fmt.Errorf("another terminal task is already running")
+	}
+	a.vfoxTaskBusy = true
+	a.vfoxTaskMutex.Unlock()
+
+	return func() {
+		a.vfoxTaskMutex.Lock()
+		a.vfoxTaskBusy = false
+		a.vfoxTaskMutex.Unlock()
+	}, nil
 }
 
 func (a *App) emitEvent(name string, data ...interface{}) {
@@ -894,6 +971,13 @@ func (a *App) ImportSdkEnvironmentFromTxt() (SdkEnvironmentImportResult, error) 
 		a.emitEvent("sdk-list-changed")
 	}
 	if len(vfoxTargets) > 0 {
+		releaseTask, err := a.tryStartVfoxTask()
+		if err != nil {
+			a.emitEvent("vfox-busy")
+			return result, err
+		}
+		defer releaseTask()
+
 		addedPlugins := make(map[string]bool)
 		if plugins, err := a.GetAddedPlugins(); err == nil {
 			for _, plugin := range plugins {
@@ -905,14 +989,14 @@ func (a *App) ImportSdkEnvironmentFromTxt() (SdkEnvironmentImportResult, error) 
 		for _, target := range vfoxTargets {
 			pluginKey := strings.ToLower(target.Name)
 			if !addedPlugins[pluginKey] {
-				if err := a.RunVfoxWithProgress([]string{"add", target.Name}); err != nil {
+				if err := a.runVfoxWithProgress([]string{"add", target.Name}); err != nil {
 					result.SkippedVfoxSdks++
 					result.Warnings = append(result.Warnings, fmt.Sprintf("Skipped %s@%s: failed to add vfox plugin: %v", target.Name, target.Version, err))
 					continue
 				}
 				addedPlugins[pluginKey] = true
 			}
-			if err := a.InstallVersion(target.Name, target.Version); err != nil {
+			if err := a.installVersionUnlocked(target.Name, target.Version); err != nil {
 				result.SkippedVfoxSdks++
 				result.Warnings = append(result.Warnings, fmt.Sprintf("Skipped %s@%s: failed to install vfox SDK: %v", target.Name, target.Version, err))
 				continue
@@ -1405,11 +1489,10 @@ func (a *App) CheckAnyPathOverride() bool {
 
 // GetInstalledSdks 解析 vfox ls 的输出
 func (a *App) GetInstalledSdks() ([]SdkInfo, error) {
-	out, err := a.RunVfoxCommand("ls")
-	if err != nil {
-		return nil, err
-	}
+	return a.getInstalledSdksUnlocked()
+}
 
+func parseInstalledSdksOutput(out string) []SdkInfo {
 	lines := strings.Split(out, "\n")
 	sdks := make([]SdkInfo, 0)
 	var currentSdk *SdkInfo
@@ -1440,7 +1523,7 @@ func (a *App) GetInstalledSdks() ([]SdkInfo, error) {
 		sdks = append(sdks, *currentSdk)
 	}
 
-	return sdks, nil
+	return sdks
 }
 
 // getCacheFile 获取插件缓存文件的路径
@@ -1797,16 +1880,27 @@ func (a *App) UseVersion(name, version string) (string, error) {
 	if name == "" || version == "" {
 		return "", fmt.Errorf("plugin name and version cannot be empty")
 	}
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return "", err
+	}
+	defer releaseTask()
+
+	return a.useVersionUnlocked(name, version)
+}
+
+func (a *App) useVersionUnlocked(name, version string) (string, error) {
 	if activeCustomPath, err := a.GetActiveCustomSdk(name); err == nil && activeCustomPath != "" {
 		a.removeJunctionIfExists(a.getVfoxHomePath("sdks", name))
 	}
 
 	// 使用 RunVfoxCommand 正常等待 vfox use 完成，因为我们已经在环境变量里伪装成了 cmd。
-	if _, err := a.RunVfoxCommand("use", "--global", name+"@"+version); err != nil {
+	if _, err := a.runVfoxCommand("use", "--global", name+"@"+version); err != nil {
 		a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
 		return "", err
 	}
-	runtimeRoot, err := a.resolveVersionRuntimeRoot(name, version)
+	runtimeRoot, err := a.resolveVersionRuntimeRootUnlocked(name, version)
 	if err != nil {
 		a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
 		return "", err
@@ -1839,6 +1933,18 @@ func (a *App) resolveVersionRuntimeRoot(name string, version string) (string, er
 	if err != nil {
 		return "", err
 	}
+	return a.resolveVersionRuntimeRootFromPath(name, version, versionPath)
+}
+
+func (a *App) resolveVersionRuntimeRootUnlocked(name string, version string) (string, error) {
+	versionPath, err := a.getVersionPathUnlocked(name, version)
+	if err != nil {
+		return "", err
+	}
+	return a.resolveVersionRuntimeRootFromPath(name, version, versionPath)
+}
+
+func (a *App) resolveVersionRuntimeRootFromPath(name string, version string, versionPath string) (string, error) {
 	versionPath = strings.TrimSpace(versionPath)
 	if versionPath == "" {
 		return "", fmt.Errorf("unable to resolve install path for %s@%s", name, version)
@@ -1972,11 +2078,22 @@ func (a *App) UseCustomSdk(name string, exePath string) (string, error) {
 	if err := a.ensureVfoxHomeDir(); err != nil {
 		return "", err
 	}
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return "", err
+	}
+	defer releaseTask()
+
+	return a.useCustomSdkUnlocked(name, exePath)
+}
+
+func (a *App) useCustomSdkUnlocked(name string, exePath string) (string, error) {
 	root := a.getSdkRoot(exePath)
 
 	// 1. Clear the vfox selection so that both don't show "当前" at the same time.
 	// We MUST do this synchronously BEFORE overwriting the symlink, otherwise vfox might delete our custom symlink.
-	if err := a.clearGlobalSdkSelection(name); err != nil {
+	if err := a.clearGlobalSdkSelectionUnlocked(name); err != nil {
 		return "", err
 	}
 
@@ -2000,7 +2117,18 @@ func (a *App) UnuseVersion(name string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("plugin name cannot be empty")
 	}
-	if err := a.clearGlobalSdkSelection(name); err != nil {
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return "", err
+	}
+	defer releaseTask()
+
+	return a.unuseVersionUnlocked(name)
+}
+
+func (a *App) unuseVersionUnlocked(name string) (string, error) {
+	if err := a.clearGlobalSdkSelectionUnlocked(name); err != nil {
 		a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
 		return "", err
 	}
@@ -2015,9 +2143,24 @@ func (a *App) clearGlobalSdkSelection(name string) error {
 	if name == "" {
 		return fmt.Errorf("plugin name cannot be empty")
 	}
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return err
+	}
+	defer releaseTask()
+
+	return a.clearGlobalSdkSelectionUnlocked(name)
+}
+
+func (a *App) clearGlobalSdkSelectionUnlocked(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("plugin name cannot be empty")
+	}
 
 	var cmdErr error
-	if _, err := a.RunVfoxCommand("unuse", "--global", name); err != nil {
+	if _, err := a.runVfoxCommand("unuse", "--global", name); err != nil {
 		cmdErr = err
 	}
 	if err := a.removeGlobalSdkSelectionFromConfig(name); err != nil {
@@ -2091,7 +2234,18 @@ func (a *App) InstallVersion(name, version string) error {
 	if name == "" || version == "" {
 		return fmt.Errorf("plugin name and version cannot be empty")
 	}
-	return a.RunVfoxWithProgress([]string{"install", "-y", name + "@" + version})
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return err
+	}
+	defer releaseTask()
+
+	return a.installVersionUnlocked(name, version)
+}
+
+func (a *App) installVersionUnlocked(name, version string) error {
+	return a.runVfoxWithProgress([]string{"install", "-y", name + "@" + version})
 }
 
 // RemovePlugin 移除指定插件及其相关的 SDK 和环境变量
@@ -2107,6 +2261,12 @@ func (a *App) RemovePluginWithOptions(name string, keepCustomSdkPath string) (er
 		return fmt.Errorf("plugin name cannot be empty")
 	}
 	keepCustomSdkPath = strings.TrimSpace(keepCustomSdkPath)
+	releaseTask, lockErr := a.tryStartVfoxTask()
+	if lockErr != nil {
+		a.emitEvent("vfox-busy")
+		return lockErr
+	}
+	defer releaseTask()
 
 	m := a.GetNonVfoxSdksMap()
 	keptCustomSdks, err := customSdksToKeep(m[name], keepCustomSdkPath)
@@ -2145,13 +2305,13 @@ func (a *App) RemovePluginWithOptions(name string, keepCustomSdkPath string) (er
 		}()
 	}
 
-	sdks, err := a.GetInstalledSdks()
+	sdks, err := a.getInstalledSdksUnlocked()
 	if err == nil {
 		for _, sdk := range sdks {
 			if sdk.Name == name && sdk.Source == "vfox" {
 				// 2. 逐个卸载版本 (vfox uninstall 会顺带清理它建立的链接和环境配置)
 				for _, v := range sdk.Versions {
-					_ = a.RunVfoxWithProgress([]string{"uninstall", name + "@" + v.Version})
+					_ = a.runVfoxWithProgress([]string{"uninstall", name + "@" + v.Version})
 				}
 				break
 			}
@@ -2159,12 +2319,12 @@ func (a *App) RemovePluginWithOptions(name string, keepCustomSdkPath string) (er
 	}
 
 	// 3. 执行 vfox unuse 以确保没有任何全局/局部环境残留 (防范于未然，忽略错误)
-	_, _ = a.RunVfoxCommand("unuse", "-g", name)
-	_, _ = a.RunVfoxCommand("unuse", "-p", name)
-	_, _ = a.RunVfoxCommand("unuse", "-s", name)
+	_, _ = a.runVfoxCommand("unuse", "-g", name)
+	_, _ = a.runVfoxCommand("unuse", "-p", name)
+	_, _ = a.runVfoxCommand("unuse", "-s", name)
 
 	// 4. 彻底删除插件
-	err = a.RunVfoxWithProgress([]string{"remove", "-y", name})
+	err = a.runVfoxWithProgress([]string{"remove", "-y", name})
 	if err != nil {
 		return err
 	}
@@ -2202,7 +2362,18 @@ func (a *App) UninstallVersion(name, version string) error {
 	if name == "" || version == "" {
 		return fmt.Errorf("plugin name and version cannot be empty")
 	}
-	return a.RunVfoxWithProgress([]string{"uninstall", name + "@" + version})
+	releaseTask, err := a.tryStartVfoxTask()
+	if err != nil {
+		a.emitEvent("vfox-busy")
+		return err
+	}
+	defer releaseTask()
+
+	return a.uninstallVersionUnlocked(name, version)
+}
+
+func (a *App) uninstallVersionUnlocked(name, version string) error {
+	return a.runVfoxWithProgress([]string{"uninstall", name + "@" + version})
 }
 
 // GetVersionPath 获取指定版本的 SDK 绝对安装路径
@@ -2212,17 +2383,7 @@ func (a *App) GetVersionPath(name, version string) (string, error) {
 	if name == "" || version == "" {
 		return "", fmt.Errorf("plugin name and version cannot be empty")
 	}
-	out, err := a.RunVfoxCommand("info", name+"@"+version)
-	if err != nil {
-		return "", err
-	}
-
-	// vfox info 的最后一行或者非空行即为路径。通常情况下输出的就是绝对路径。
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) > 0 {
-		return strings.TrimSpace(lines[len(lines)-1]), nil
-	}
-	return "", nil
+	return a.getVersionPathUnlocked(name, version)
 }
 
 // SearchVersions 搜索 SDK 的可用版本，网络错误时返回空列表

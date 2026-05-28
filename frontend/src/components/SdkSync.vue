@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { onMounted, ref } from 'vue';
+import { inject, onMounted, ref } from 'vue';
 import {
   ExportCurrentEnvironmentSdks,
   ImportSdkEnvironmentFromTxt,
@@ -8,6 +8,8 @@ import {
 import { t } from '../i18n';
 
 const emit = defineEmits(['notify']);
+type RunTerminalTask = (title: string, task: () => Promise<void>) => Promise<boolean>;
+const runTerminalTask = inject<RunTerminalTask>('runTerminalTask');
 
 const previewText = ref('');
 const loadingPreview = ref(true);
@@ -28,6 +30,16 @@ const notifyError = (message: string, title = t('common.error')) => {
 const notifySuccess = (message: string, title = t('common.success')) => {
   emit('notify', { type: 'success', title, message });
 };
+
+const runTask = async (title: string, task: () => Promise<void>) => {
+  if (runTerminalTask) {
+    return runTerminalTask(title, task);
+  }
+  await task();
+  return true;
+};
+
+const isBusyError = (err: unknown) => getErrorMessage(err, '').toLowerCase().includes('another terminal task is already running');
 
 const loadPreview = async () => {
   loadingPreview.value = true;
@@ -62,21 +74,23 @@ const handleImport = async () => {
   if (importing.value) return;
   importing.value = true;
   try {
-    const result = await ImportSdkEnvironmentFromTxt();
-    if (result?.path) {
-      const message = t('sdk.import.success', {
-        imported: result.importedCustomSdks ?? 0,
-        skipped: result.skippedCustomSdks ?? 0,
-        vfox: result.vfoxSdksFound ?? 0,
-        installed: result.installedVfoxSdks ?? 0,
-        vfoxSkipped: result.skippedVfoxSdks ?? 0,
-      });
-      const warningText = result.warnings?.length ? ` ${result.warnings.join(' ')}` : '';
-      notifySuccess(`${message}${warningText}`);
-      await loadPreview();
-    }
+    await runTask(t('task.sdk.import'), async () => {
+      const result = await ImportSdkEnvironmentFromTxt();
+      if (result?.path) {
+        const message = t('sdk.import.success', {
+          imported: result.importedCustomSdks ?? 0,
+          skipped: result.skippedCustomSdks ?? 0,
+          vfox: result.vfoxSdksFound ?? 0,
+          installed: result.installedVfoxSdks ?? 0,
+          vfoxSkipped: result.skippedVfoxSdks ?? 0,
+        });
+        const warningText = result.warnings?.length ? ` ${result.warnings.join(' ')}` : '';
+        notifySuccess(`${message}${warningText}`);
+        await loadPreview();
+      }
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.import.error')));
+    notifyError(isBusyError(err) ? t('toast.please_wait') : getErrorMessage(err, t('sdk.import.error')));
   } finally {
     importing.value = false;
   }

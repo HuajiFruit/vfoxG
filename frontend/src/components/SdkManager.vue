@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, inject, onMounted, onUnmounted, watch } from 'vue';
 import { GetAllSdks, GetInstalledSdks, GetSdkDetail, UseVersion, UnuseVersion, InstallVersion, UninstallVersion, SearchVersions, GetVersionPath, RemovePluginWithOptions, GetNonVfoxSdks, AddNonVfoxSdk, RemoveNonVfoxSdk, ScanSystemSdks, UseCustomSdk, DetectSdkPathVersion, HijackPluginSystemPath, RestorePluginSystemPath, CheckPluginPathOverride, GetActiveCustomSdk, GetPlatformInfo } from '../../wailsjs/go/main/App';
 import { EventsOn, ClipboardSetText } from '../../wailsjs/runtime/runtime';
 import { main } from '../../wailsjs/go/models';
@@ -33,6 +33,8 @@ const removingPlugin = ref<string | null>(null);
 type SidebarAction = { id: number; type: 'display' };
 const props = defineProps<{ sidebarAction?: SidebarAction | null }>();
 const emit = defineEmits(['start-task', 'notify', 'sidebar-action-done', 'open-plugin-market', 'open-sync']);
+type RunTerminalTask = (title: string, task: () => Promise<void>) => Promise<boolean>;
+const runTerminalTask = inject<RunTerminalTask>('runTerminalTask');
 let sdksFetchSeq = 0;
 let detailFetchSeq = 0;
 let compatFetchSeq = 0;
@@ -168,21 +170,97 @@ const handleRemoveCustomPath = async (name: string, path: string) => {
 };
 
 const handleUseCustomPath = async (name: string, path: string) => {
-  emit('start-task', t('task.custom.use', { name, path }));
   usingVersion.value = path;
   try {
-    const result = await UseCustomSdk(name, path);
-    if (result !== 'ok') {
-      notifyError(t('sdk.custom.apply_error'));
-    }
-    clearCurrentState(name);
-    await fetchDetail(name, ++detailFetchSeq);
-    await fetchVfoxSdks();
-    await checkCompatMode(name);
+    await runTask(t('task.custom.use', { name, path }), async () => {
+      const result = await UseCustomSdk(name, path);
+      if (result !== 'ok') {
+        notifyError(t('sdk.custom.apply_error'));
+      }
+      clearCurrentState(name);
+      await fetchDetail(name, ++detailFetchSeq);
+      await fetchVfoxSdks();
+      await checkCompatMode(name);
+    });
   } catch (e) {
     notifyError(getErrorMessage(e, t('sdk.custom.apply_exception')));
   } finally {
     usingVersion.value = null;
+  }
+};
+
+const runTask = async (title: string, task: () => Promise<void>) => {
+  if (runTerminalTask) {
+    return runTerminalTask(title, task);
+  }
+  emit('start-task', title);
+  await task();
+  return true;
+};
+
+const getBusyErrorFallback = (fallback: string) => {
+  return t('toast.please_wait') || fallback;
+};
+
+const isBusyError = (err: unknown) => {
+  const message = getErrorMessage(err, '').toLowerCase();
+  return message.includes('another terminal task is already running');
+};
+
+const notifyTaskError = (err: unknown, fallback: string) => {
+  if (isBusyError(err)) {
+    notifyInfo(getBusyErrorFallback(fallback));
+    return;
+  }
+  notifyError(getErrorMessage(err, fallback));
+};
+
+const handleUse = async (name: string, version: string) => {
+  usingVersion.value = version;
+  try {
+    await runTask(t('task.version.switch', { name, version }), async () => {
+      await UseVersion(name, version);
+      await fetchDetail(name, ++detailFetchSeq);
+      await fetchVfoxSdks();
+      await checkCompatMode(name);
+    });
+  } catch (err) {
+    notifyTaskError(err, t('sdk.switch_error', { name, version }));
+  } finally {
+    usingVersion.value = null;
+  }
+};
+
+const clearCurrentState = (name: string) => {
+  const detail = sdkDetails.value[name];
+  if (detail) {
+    detail.current = '';
+    (detail.versions || []).forEach(v => { v.isCurrent = false; });
+  }
+  if (selectedSdk.value?.name === name) {
+    activeCustomSdk.value = '';
+  }
+};
+
+const handleUnuse = async (name: string) => {
+  if (unusingSdk.value === name) return;
+  unusingSdk.value = name;
+  try {
+    await runTask(t('task.version.unset', { name }), async () => {
+      await UnuseVersion(name);
+      clearCurrentState(name);
+      await fetchVfoxSdks();
+      if (selectedSdk.value?.name === name) {
+        await fetchDetail(name, ++detailFetchSeq);
+        await checkCompatMode(name);
+      }
+    });
+  } catch (err) {
+    notifyTaskError(err, t('sdk.unset_error', { name }));
+  } finally {
+    if (unusingSdk.value === name) {
+      unusingSdk.value = null;
+    }
   }
 };
 
@@ -431,71 +509,24 @@ watch(
   { immediate: true }
 );
 
-const handleUse = async (name: string, version: string) => {
-  emit('start-task', t('task.version.switch', { name, version }));
-  usingVersion.value = version;
-  try {
-    await UseVersion(name, version);
-    await fetchDetail(name, ++detailFetchSeq);
-    await fetchVfoxSdks();
-    await checkCompatMode(name);
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.switch_error', { name, version })));
-  } finally {
-    usingVersion.value = null;
-  }
-};
-
-const clearCurrentState = (name: string) => {
-  const detail = sdkDetails.value[name];
-  if (detail) {
-    detail.current = '';
-    (detail.versions || []).forEach(v => { v.isCurrent = false; });
-  }
-  if (selectedSdk.value?.name === name) {
-    activeCustomSdk.value = '';
-  }
-};
-
-const handleUnuse = async (name: string) => {
-  if (unusingSdk.value === name) return;
-  emit('start-task', t('task.version.unset', { name }));
-  unusingSdk.value = name;
-  try {
-    await UnuseVersion(name);
-    clearCurrentState(name);
-    await fetchVfoxSdks();
-    if (selectedSdk.value?.name === name) {
-      await fetchDetail(name, ++detailFetchSeq);
-      await checkCompatMode(name);
-    }
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.unset_error', { name })));
-  } finally {
-    if (unusingSdk.value === name) {
-      unusingSdk.value = null;
-    }
-  }
-};
-
 const handleInstall = async (name: string, version: string) => {
-  emit('start-task', t('task.version.install', { name, version }));
   try {
-    await InstallVersion(name, version);
-    await fetchDetail(name, ++detailFetchSeq);
-    await fetchVfoxSdks();
-    
-    // Fetch path for newly installed version
-    const newPath = await GetVersionPath(name, version);
-    versionPaths.value[name] ||= {};
-    versionPaths.value[name][version] = newPath;
-    
-    if (searchingFor.value === name) {
-      searchResults.value = [];
-      searchingFor.value = null;
-    }
+    await runTask(t('task.version.install', { name, version }), async () => {
+      await InstallVersion(name, version);
+      await fetchDetail(name, ++detailFetchSeq);
+      await fetchVfoxSdks();
+
+      const newPath = await GetVersionPath(name, version);
+      versionPaths.value[name] ||= {};
+      versionPaths.value[name][version] = newPath;
+
+      if (searchingFor.value === name) {
+        searchResults.value = [];
+        searchingFor.value = null;
+      }
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.install_error', { name, version })));
+    notifyTaskError(err, t('sdk.install_error', { name, version }));
   }
 };
 
@@ -530,23 +561,25 @@ const executeConfirm = async () => {
   confirmAction.value = { type: null, name: '' };
   
   if (type === 'uninstallVersion' && version) {
-    emit('start-task', t('task.version.uninstall', { name, version }));
     try {
-      if (sdkDetails.value[name]?.current === version) {
-        await handleUnuse(name);
-      }
-      await UninstallVersion(name, version);
-      await fetchDetail(name, ++detailFetchSeq);
-      await fetchVfoxSdks();
-      const paths = versionPaths.value[name];
-      if (paths) {
-        delete paths[version];
-        if (Object.keys(paths).length === 0) {
-          delete versionPaths.value[name];
+      await runTask(t('task.version.uninstall', { name, version }), async () => {
+        if (sdkDetails.value[name]?.current === version) {
+          await UnuseVersion(name);
+          clearCurrentState(name);
         }
-      }
+        await UninstallVersion(name, version);
+        await fetchDetail(name, ++detailFetchSeq);
+        await fetchVfoxSdks();
+        const paths = versionPaths.value[name];
+        if (paths) {
+          delete paths[version];
+          if (Object.keys(paths).length === 0) {
+            delete versionPaths.value[name];
+          }
+        }
+      });
     } catch (err) {
-      notifyError(getErrorMessage(err, t('sdk.uninstall_error', { name, version })));
+      notifyTaskError(err, t('sdk.uninstall_error', { name, version }));
     }
   } else if (type === 'removeCustomSdk' && path) {
     const isCurrent = activeCustomSdk.value === path;
@@ -566,14 +599,15 @@ const executeRemovePlugin = async (chosenPath: string | null) => {
   removePluginName.value = null;
   if (!name) return;
 
-  emit('start-task', t('task.plugin.remove', { name }));
   removingPlugin.value = name;
   try {
-    await RemovePluginWithOptions(name, chosenPath || '');
-    await fetchAllSdks();
-    closeDetail();
+    await runTask(t('task.plugin.remove', { name }), async () => {
+      await RemovePluginWithOptions(name, chosenPath || '');
+      await fetchAllSdks();
+      closeDetail();
+    });
   } catch (err) {
-    notifyError(getErrorMessage(err, t('sdk.remove_plugin_error', { name })));
+    notifyTaskError(err, t('sdk.remove_plugin_error', { name }));
   } finally {
     removingPlugin.value = null;
   }

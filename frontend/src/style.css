@@ -646,13 +646,36 @@ nav {
   overflow: hidden;
 }
 
+.toast-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .toast-title {
   font-weight: 600;
   color: var(--md-on-surface);
   font-size: 14px;
+  flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.toast-phase-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .toast-subtitle {
@@ -671,6 +694,14 @@ nav {
   overflow: hidden;
   border-radius: var(--md-shape-full);
   background: rgba(184, 169, 224, 0.16);
+}
+
+.toast-progress.download {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+.toast-progress.install {
+  background: rgba(16, 185, 129, 0.18);
 }
 
 .toast-progress-fill {
@@ -693,6 +724,14 @@ nav {
   background: #10b981;
 }
 
+.toast-progress.download .toast-progress-fill {
+  background: linear-gradient(90deg, #60a5fa, #38bdf8);
+}
+
+.toast-progress.install .toast-progress-fill {
+  background: linear-gradient(90deg, #34d399, #10b981);
+}
+
 .toast-progress.error .toast-progress-fill {
   background: var(--md-error);
 }
@@ -703,6 +742,26 @@ nav {
   font-size: 11px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+}
+
+.toast-busy-hint {
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--md-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.busy-hint-enter-active,
+.busy-hint-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.busy-hint-enter-from,
+.busy-hint-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 @keyframes toastProgressSweep {
@@ -716,6 +775,42 @@ nav {
 
 .text-success {
   color: #10b981;
+}
+
+.toast-phase-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(115, 214, 208, 0.12);
+  color: var(--md-primary);
+}
+
+.toast-phase-icon.phase-download {
+  background: rgba(96, 165, 250, 0.14);
+  color: #60a5fa;
+}
+
+.toast-phase-icon.phase-install {
+  background: rgba(52, 211, 153, 0.14);
+  color: #34d399;
+}
+
+.toast-phase-icon .material-symbols-outlined {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.toast-phase-pill.phase-download {
+  background: rgba(96, 165, 250, 0.16);
+  color: #60a5fa;
+}
+
+.toast-phase-pill.phase-install {
+  background: rgba(52, 211, 153, 0.16);
+  color: #34d399;
 }
 
 .toast-close {
