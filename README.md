@@ -24,14 +24,12 @@
 
 Download the latest release from [GitHub Releases](https://github.com/HuajiFruit/vfoxG/releases).
 
-vfoxG v0.3.0 is built by GitHub Actions for:
+vfoxG is currently released for Windows only:
 
 | Platform | Artifact |
 | --- | --- |
 | Windows amd64 | `vfoxG-windows-amd64-installer.exe` |
 | Windows 386 | `vfoxG-windows-386-installer.exe` |
-| Linux amd64 | portable `.tar.gz`, `.deb`, `.rpm` |
-| macOS Apple Silicon | `vfoxG-macos-arm64.dmg` |
 
 ## Features
 
@@ -53,7 +51,6 @@ vfoxG v0.3.0 is built by GitHub Actions for:
 - Manage PATH integration from the app.
 - Resolve Windows App Execution Alias conflicts.
 - Request elevation only when system-level changes are needed.
-- Use platform-specific shell profile handling on Linux and macOS.
 
 ## Architecture
 
@@ -74,7 +71,7 @@ vfoxG v0.3.0 is built by GitHub Actions for:
 
 ## Runtime Core
 
-Release builds bundle the required vfox core binary for each supported platform.
+Release builds bundle the required Windows vfox core binaries.
 
 For local development, place vfox in the matching `core/` directory:
 
@@ -83,10 +80,6 @@ core/
   windows/
     x86_64/vfox.exe
     x86/vfox.exe
-  linux/
-    x86_64/vfox
-  macos/
-    arm64/vfox
 ```
 
 The `core/` directory is ignored by Git.
@@ -101,7 +94,6 @@ The `core/` directory is ignored by Git.
 | Node.js | 22+ |
 | Wails CLI | v2 |
 | NSIS | 3.x, Windows installer only |
-| nfpm | Linux package builds only |
 
 ### Run
 
@@ -140,7 +132,7 @@ git tag -a v0.3.0 -m "v0.3.0"
 git push origin v0.3.0
 ```
 
-The release workflow downloads vfox core binaries, builds platform packages, and uploads release assets automatically.
+The release workflow downloads Windows vfox core binaries, builds Windows installers, and uploads release assets automatically.
 
 ## Project Structure
 
@@ -148,13 +140,9 @@ The release workflow downloads vfox core binaries, builds platform packages, and
 vfoxG/
   app.go                  Go backend core
   app_windows.go          Windows platform integration
-  app_unix.go             Linux/macOS shared integration
-  app_linux.go            Linux shell profile integration
-  app_darwin.go           macOS shell profile integration
   frontend/               Vue 3 frontend
   build/windows/          Windows installer assets
   .github/workflows/      GitHub Actions release pipeline
-  nfpm.yaml.tmpl          Linux deb/rpm package template
   wails.json              Wails project config
 ```
 
