@@ -24,7 +24,7 @@
 
 Download the latest release from [GitHub Releases](https://github.com/HuajiFruit/vfoxG/releases).
 
-vfoxG is currently released for Windows only:
+vfoxG is built with Wails and can be packaged for multiple desktop platforms. At the moment, only the Windows release builds have been verified and published:
 
 | Platform | Artifact |
 | --- | --- |
@@ -71,7 +71,7 @@ vfoxG is currently released for Windows only:
 
 ## Runtime Core
 
-Release builds bundle the required Windows vfox core binaries.
+Release builds bundle the required Windows vfox core binaries. Packaging other platforms is possible, but those packages need matching vfox core binaries and platform-specific verification before they are published.
 
 For local development, place vfox in the matching `core/` directory:
 
@@ -123,6 +123,8 @@ Windows installer:
 wails build -platform windows/amd64 -nsis -clean
 ```
 
+Other Wails targets can be built with the appropriate platform toolchain and bundled vfox core, but they are not currently covered by the verified release workflow.
+
 ## Release Process
 
 Releases are built by GitHub Actions when a `v*` tag is pushed.
@@ -132,7 +134,7 @@ git tag -a v0.3.0 -m "v0.3.0"
 git push origin v0.3.0
 ```
 
-The release workflow downloads Windows vfox core binaries, builds Windows installers, and uploads release assets automatically.
+The release workflow currently downloads Windows vfox core binaries, builds Windows installers, and uploads release assets automatically. Other platform packages may be added later after they are tested.
 
 ## Project Structure
 

@@ -24,7 +24,7 @@
 
 最新版本可以在 [GitHub Releases](https://github.com/HuajiFruit/vfoxG/releases) 下载。
 
-vfoxG 当前仅发布 Windows 版本：
+vfoxG 基于 Wails 构建，具备打包成多平台桌面应用的基础能力。目前只有 Windows Release 构建经过验证并发布：
 
 | 平台 | 产物 |
 | --- | --- |
@@ -71,7 +71,7 @@ vfoxG 当前仅发布 Windows 版本：
 
 ## vfox Core
 
-Release 安装包会内置 Windows vfox core。
+Release 安装包会内置 Windows vfox core。其它平台也可以打包，但需要准备对应平台的 vfox core，并完成平台相关验证后再发布。
 
 本地开发时，需要把 vfox 放到对应的 `core/` 目录：
 
@@ -123,6 +123,8 @@ Windows 安装包：
 wails build -platform windows/amd64 -nsis -clean
 ```
 
+其它 Wails 目标平台可以在准备好对应工具链和 vfox core 后打包，但目前不属于已验证的发布流程。
+
 ## 发布流程
 
 推送 `v*` tag 后，GitHub Actions 会自动构建并上传 Release 产物。
@@ -132,7 +134,7 @@ git tag -a v0.3.0 -m "v0.3.0"
 git push origin v0.3.0
 ```
 
-发布工作流会下载 Windows vfox core、构建 Windows 安装包，并自动上传到 GitHub Release。
+当前发布工作流会下载 Windows vfox core、构建 Windows 安装包，并自动上传到 GitHub Release。其它平台包后续验证完成后可以再加入。
 
 ## 项目结构
 
