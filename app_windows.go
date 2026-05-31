@@ -293,6 +293,159 @@ func (a *App) removeWindowsSDKShims(pluginName string, aliases []string) error {
 	return nil
 }
 
+type windowsPathOverrideEntry struct {
+	Version      int      `json:"Version,omitempty"`
+	ShimDir      string   `json:"ShimDir,omitempty"`
+	Aliases      []string `json:"Aliases,omitempty"`
+	UserPaths    []string `json:"UserPaths,omitempty"`
+	MachinePaths []string `json:"MachinePaths,omitempty"`
+}
+
+func (a *App) refreshPathOverridesAfterVfoxHomeChange(oldHome string) error {
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	if strings.TrimSpace(hijackFile) == "" {
+		return nil
+	}
+	data, err := os.ReadFile(hijackFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil
+	}
+
+	var entries map[string]windowsPathOverrideEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	shimDir := a.windowsPathShimDir()
+	if strings.TrimSpace(shimDir) == "" {
+		return fmt.Errorf("unable to resolve shim directory")
+	}
+
+	removeRoots := windowsMigratedPathOverrideRoots(oldHome, shimDir, entries)
+	refreshed := make(map[string]windowsPathOverrideEntry, len(entries))
+	for name, entry := range entries {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		aliases, err := a.writeWindowsSDKShims(name)
+		if err != nil {
+			return err
+		}
+		entry.Version = 2
+		entry.ShimDir = shimDir
+		entry.Aliases = aliases
+		refreshed[name] = entry
+	}
+	if len(refreshed) == 0 {
+		return nil
+	}
+	if err := a.writeJSONFile(hijackFile, refreshed); err != nil {
+		return err
+	}
+	return updateWindowsMigratedPathOverride(removeRoots, shimDir)
+}
+
+func windowsMigratedPathOverrideRoots(oldHome string, shimDir string, entries map[string]windowsPathOverrideEntry) []string {
+	var roots []string
+	addRoot := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		for _, existing := range roots {
+			if strings.EqualFold(filepath.Clean(existing), path) {
+				return
+			}
+		}
+		roots = append(roots, path)
+	}
+
+	addRoot(shimDir)
+	if strings.TrimSpace(oldHome) != "" {
+		addRoot(filepath.Join(oldHome, "path-shims"))
+		for name := range entries {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			sdkPath := filepath.Join(oldHome, "sdks", name)
+			addRoot(sdkPath)
+			addRoot(filepath.Join(sdkPath, "Scripts"))
+			addRoot(filepath.Join(sdkPath, "bin"))
+			addRoot(filepath.Join(sdkPath, "sbin"))
+		}
+	}
+	for _, entry := range entries {
+		addRoot(entry.ShimDir)
+	}
+	return roots
+}
+
+func updateWindowsMigratedPathOverride(removeRoots []string, shimDir string) error {
+	rootsJSON, _ := json.Marshal(removeRoots)
+	doneFile := tempDoneFile("vfox_migrate_path", "sdk")
+	os.Remove(doneFile)
+
+	script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+$removeRootsJson = '%s'
+$shimDir = '%s'
+
+function Normalize-Path($p) {
+    if (-not $p) { return '' }
+    return $p.Trim().TrimEnd('\')
+}
+
+$removeRoots = @()
+if ($removeRootsJson) {
+    $removeRoots = @($removeRootsJson | ConvertFrom-Json)
+}
+$removeSet = @{}
+foreach ($p in $removeRoots) {
+    $normalized = (Normalize-Path $p).ToLower()
+    if ($normalized -ne '') {
+        $removeSet[$normalized] = $true
+    }
+}
+
+$current = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+if (-not $current) {
+    $parts = @()
+} else {
+    $parts = @($current -split ';' | Where-Object { $_.Trim() -ne '' })
+}
+
+$cleaned = @()
+foreach ($p in $parts) {
+    $normalized = (Normalize-Path $p).ToLower()
+    if ($normalized -ne '' -and -not $removeSet.ContainsKey($normalized)) {
+        $cleaned += $p.Trim()
+    }
+}
+
+$newParts = @($shimDir) + $cleaned
+[Environment]::SetEnvironmentVariable('Path', ($newParts -join ';'), 'Machine')
+
+Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
+$result = [UIntPtr]::Zero
+[Win32.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
+New-Item -Path '%s' -ItemType File -Force | Out-Null
+`, psEscape(string(rootsJSON)), psEscape(shimDir), psEscape(doneFile))
+
+	return runElevatedScriptHelper(script, doneFile)
+}
+
 func (a *App) HijackSystemPath(name string, exePath string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

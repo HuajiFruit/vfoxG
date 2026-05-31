@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -894,6 +895,9 @@ func (a *App) SetDownloadPathWithMigration(path string, migrateVfoxData bool) (D
 		return DownloadPathInfo{}, err
 	}
 	a.setVfoxHome(normalized)
+	if migrateVfoxData {
+		a.repairMigratedSdkEntrypoints(current)
+	}
 	a.emitEvent("vfox-log", "[INFO] VFOX_HOME="+normalized)
 	a.emitEvent("vfox-home-changed")
 	a.emitEvent("sdk-list-changed")
@@ -924,12 +928,111 @@ func (a *App) ResetDownloadPathWithMigration(migrateVfoxData bool) (DownloadPath
 		return DownloadPathInfo{}, err
 	}
 	a.setVfoxHome(defaultPath)
+	if migrateVfoxData {
+		a.repairMigratedSdkEntrypoints(current)
+	}
 	a.emitEvent("vfox-log", "[INFO] VFOX_HOME="+defaultPath)
 	a.emitEvent("vfox-home-changed")
 	a.emitEvent("sdk-list-changed")
 	go a.RefreshAvailablePlugins()
 	go a.ScanSystemSdks()
 	return a.GetDownloadPathInfo()
+}
+
+func (a *App) repairMigratedSdkEntrypoints(oldHome string) {
+	if err := a.repairCurrentVfoxSdkLinks(); err != nil {
+		a.emitEvent("vfox-log", "[APP WARN] Failed to refresh migrated SDK links: "+err.Error())
+	}
+	if err := a.refreshPathOverridesAfterVfoxHomeChange(oldHome); err != nil {
+		a.emitEvent("vfox-log", "[APP WARN] Failed to refresh migrated SDK PATH entries: "+err.Error())
+	}
+}
+
+func (a *App) repairCurrentVfoxSdkLinks() error {
+	selections, err := a.readVfoxGlobalSelections()
+	if err != nil {
+		return err
+	}
+	if len(selections) == 0 {
+		return nil
+	}
+
+	installedNames := make(map[string]bool)
+	if installedSdks, err := a.getInstalledSdksUnlocked(); err == nil {
+		for _, sdk := range installedSdks {
+			installedNames[strings.ToLower(strings.TrimSpace(sdk.Name))] = true
+		}
+	}
+
+	var errs []error
+	for name, version := range selections {
+		if len(installedNames) > 0 && !installedNames[strings.ToLower(name)] {
+			continue
+		}
+		if activeCustomPath, err := a.GetActiveCustomSdk(name); err == nil && activeCustomPath != "" {
+			continue
+		}
+
+		runtimeRoot, err := a.resolveVersionRuntimeRootUnlocked(name, version)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s@%s: %w", name, version, err))
+			continue
+		}
+		sdkLinkPath := a.getVfoxHomePath("sdks", name)
+		if sdkLinkPath == "" {
+			errs = append(errs, fmt.Errorf("%s@%s: unable to resolve sdk link path", name, version))
+			continue
+		}
+		a.removeJunctionIfExists(sdkLinkPath)
+		if err := a.ensureJunction(sdkLinkPath, runtimeRoot); err != nil {
+			errs = append(errs, fmt.Errorf("%s@%s: %w", name, version, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (a *App) readVfoxGlobalSelections() (map[string]string, error) {
+	result := make(map[string]string)
+	configPath := a.getVfoxHomePath(".vfox.toml")
+	if strings.TrimSpace(configPath) == "" {
+		return result, nil
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return result, err
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		name, rawVersion, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		version := strings.TrimSpace(rawVersion)
+		version = strings.Trim(version, `"'`)
+		version = normalizeSdkVersion(version)
+		if name == "" || isUnknownSdkVersion(version) || !containsDigit(version) {
+			continue
+		}
+		result[name] = version
+	}
+	return result, nil
+}
+
+func containsDigit(value string) bool {
+	for _, r := range value {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) SelectDownloadPath() (string, error) {
@@ -1061,9 +1164,11 @@ func (a *App) ImportSdkEnvironmentFromTxt() (SdkEnvironmentImportResult, error) 
 	type vfoxImportTarget struct {
 		Name    string
 		Version string
+		Current bool
 	}
 	var vfoxTargets []vfoxImportTarget
 	seenVfoxTargets := make(map[string]bool)
+	vfoxTargetIndexes := make(map[string]int)
 	for _, row := range rows {
 		switch row.Kind {
 		case "vfox":
@@ -1077,7 +1182,10 @@ func (a *App) ImportSdkEnvironmentFromTxt() (SdkEnvironmentImportResult, error) 
 			key := strings.ToLower(name) + "@" + strings.ToLower(version)
 			if !seenVfoxTargets[key] {
 				seenVfoxTargets[key] = true
-				vfoxTargets = append(vfoxTargets, vfoxImportTarget{Name: name, Version: version})
+				vfoxTargetIndexes[key] = len(vfoxTargets)
+				vfoxTargets = append(vfoxTargets, vfoxImportTarget{Name: name, Version: version, Current: row.Current})
+			} else if row.Current {
+				vfoxTargets[vfoxTargetIndexes[key]].Current = true
 			}
 		case "custom":
 			if row.Name == "" || row.Path == "" {
@@ -1156,6 +1264,11 @@ func (a *App) ImportSdkEnvironmentFromTxt() (SdkEnvironmentImportResult, error) 
 				continue
 			}
 			result.InstalledVfoxSdks++
+			if target.Current {
+				if _, err := a.useVersionUnlocked(target.Name, target.Version); err != nil {
+					result.Warnings = append(result.Warnings, fmt.Sprintf("Installed %s@%s but failed to activate it: %v", target.Name, target.Version, err))
+				}
+			}
 		}
 		a.emitEvent("sdk-list-changed")
 	}

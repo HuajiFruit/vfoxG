@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -118,6 +119,58 @@ func (a *App) HijackPluginSystemPath(pluginName string) error {
 
 func (a *App) RestorePluginSystemPath(pluginName string) error {
 	return a.RestoreSystemPath(pluginName)
+}
+
+func (a *App) refreshPathOverridesAfterVfoxHomeChange(oldHome string) error {
+	names, err := unixManagedSDKPathOverrideNames()
+	if err != nil {
+		return err
+	}
+
+	var errs []error
+	for _, name := range names {
+		sdkPath := a.getVfoxHomePath("sdks", name)
+		if strings.TrimSpace(sdkPath) == "" {
+			errs = append(errs, fmt.Errorf("%s: unable to resolve SDK PATH entry", name))
+			continue
+		}
+		if err := unixWritePathBlock(unixSDKMarkerLabel(name), unixSDKPathEntries(sdkPath)); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func unixManagedSDKPathOverrideNames() ([]string, error) {
+	startPrefix := "# >>> " + vfoxSDKPathMarkerPrefix
+	seen := make(map[string]bool)
+	var names []string
+	var lastErr error
+	for _, profilePath := range unixShellProfileCandidates() {
+		data, err := os.ReadFile(profilePath)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				lastErr = err
+			}
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+			if !strings.HasPrefix(line, startPrefix) || !strings.HasSuffix(line, ">>>") {
+				continue
+			}
+			name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, startPrefix), ">>>"))
+			if name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return names, nil
 }
 
 func (a *App) CheckPluginWin11CompatMode(pluginName string) bool {
