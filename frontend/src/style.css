@@ -1995,22 +1995,11 @@ hr {
   opacity: 0.86;
 }
 
-.search-result-card.unreleased {
-  cursor: default;
-  opacity: 0.9;
-}
-
 .search-result-card.installed:hover {
   transform: none;
 }
 
-.search-result-card.unreleased:hover {
-  transform: none;
-}
-
-.search-result-card .installed-text,
-.search-result-card .unreleased-text,
-.version-status-pill {
+.search-result-card .installed-text {
   flex-shrink: 0;
   min-width: 76px;
   padding: 4px 10px;
@@ -2024,21 +2013,6 @@ hr {
 .search-result-card .installed-text {
   background: rgba(16, 185, 129, 0.12);
   color: #34d399;
-}
-
-.search-result-card .unreleased-text,
-.version-status-pill.unreleased {
-  background: rgba(245, 158, 11, 0.14);
-  border: 1px solid rgba(245, 158, 11, 0.26);
-  color: #f59e0b;
-}
-
-.version-status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 28px;
-  min-width: 96px;
 }
 
 /* Main Nav Transition: Slide Up */
@@ -2473,13 +2447,6 @@ nav {
 }
 
 .search-result-card.installed:hover {
-  background: var(--md-surface-container-low);
-  border-color: var(--panel-border);
-  box-shadow: none;
-  color: var(--md-on-surface);
-}
-
-.search-result-card.unreleased:hover {
   background: var(--md-surface-container-low);
   border-color: var(--panel-border);
   box-shadow: none;
