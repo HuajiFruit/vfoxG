@@ -187,28 +187,34 @@ onMounted(() => {
   <div class="settings-view view-container">
     <h2>{{ t('settings.title') }}</h2>
 
-    <div v-if="pendingMigration" class="migration-confirm-panel">
-      <div class="migration-confirm-icon">
-        <span class="material-symbols-outlined">sync_alt</span>
-      </div>
-      <div class="migration-confirm-copy">
-        <h3>{{ t('settings.download.path.migrate_title') }}</h3>
-        <p>{{ t('settings.download.path.migrate_confirm') }}</p>
-        <div class="migration-confirm-path">
-          <span>{{ t('settings.download.path.migrate_target') }}</span>
-          <code>{{ pendingMigration.targetPath }}</code>
+    <Transition name="modal" appear>
+      <div v-if="pendingMigration" class="modal-overlay" role="dialog" aria-modal="true" @click="cancelPendingMigration">
+        <div class="modal-content migration-confirm-modal" @click.stop>
+          <div class="migration-confirm-heading">
+            <div class="migration-confirm-icon">
+              <span class="material-symbols-outlined">sync_alt</span>
+            </div>
+            <div>
+              <h2 class="modal-title">{{ t('settings.download.path.migrate_title') }}</h2>
+              <p class="modal-message">{{ t('settings.download.path.migrate_confirm') }}</p>
+            </div>
+          </div>
+          <div class="migration-confirm-path">
+            <span>{{ t('settings.download.path.migrate_target') }}</span>
+            <code>{{ pendingMigration.targetPath }}</code>
+          </div>
+          <div class="modal-actions">
+            <button class="btn tonal" :disabled="isDownloadPathBusy" @click="cancelPendingMigration">
+              {{ t('common.cancel') }}
+            </button>
+            <button class="btn primary" :disabled="isDownloadPathBusy" @click="confirmPendingMigration">
+              <div v-if="isDownloadPathBusy" class="spinner small-spinner"></div>
+              <template v-else>{{ t('common.confirm') }}</template>
+            </button>
+          </div>
         </div>
       </div>
-      <div class="migration-confirm-actions">
-        <button class="btn outlined" :disabled="isDownloadPathBusy" @click="cancelPendingMigration">
-          {{ t('common.cancel') }}
-        </button>
-        <button class="btn primary" :disabled="isDownloadPathBusy" @click="confirmPendingMigration">
-          <div v-if="isDownloadPathBusy" class="spinner small-spinner"></div>
-          <template v-else>{{ t('common.confirm') }}</template>
-        </button>
-      </div>
-    </div>
+    </Transition>
     
     <div class="settings-section">
       <h3 class="section-heading">{{ t('settings.appearance') }}</h3>
@@ -348,28 +354,29 @@ onMounted(() => {
   margin-top: 24px;
 }
 
-.migration-confirm-panel {
-  margin-top: 16px;
-  padding: 16px;
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
-  align-items: center;
+.migration-confirm-modal {
+  max-width: 540px;
+}
+
+.migration-confirm-heading {
+  display: flex;
+  align-items: flex-start;
   gap: 14px;
-  border: 1px solid rgba(255, 188, 77, 0.48);
-  border-radius: var(--md-shape-medium);
-  background:
-    linear-gradient(135deg, rgba(255, 188, 77, 0.15), rgba(115, 214, 208, 0.06)),
-    var(--md-surface-container-low);
+  margin-bottom: 20px;
 }
 
 .migration-confirm-icon {
   width: 42px;
   height: 42px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--md-shape-small);
-  background: rgba(255, 188, 77, 0.14);
+  background:
+    linear-gradient(135deg, rgba(255, 188, 77, 0.22), rgba(115, 214, 208, 0.12)),
+    var(--md-surface-container-low);
+  border: 1px solid rgba(255, 188, 77, 0.28);
   color: var(--md-on-surface);
 }
 
@@ -377,31 +384,22 @@ onMounted(() => {
   font-size: 24px;
 }
 
-.migration-confirm-copy {
-  min-width: 0;
+.migration-confirm-modal .modal-title {
+  margin-bottom: 8px;
 }
 
-.migration-confirm-copy h3 {
-  margin: 0 0 4px;
-  color: var(--md-on-surface);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
-.migration-confirm-copy p {
-  margin: 0;
-  color: var(--md-on-surface-variant);
-  font-size: 13px;
-  line-height: 1.5;
+.migration-confirm-modal .modal-message {
+  margin-bottom: 0;
 }
 
 .migration-confirm-path {
-  margin-top: 8px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
   gap: 8px;
+  margin-bottom: 28px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border, var(--md-outline-variant));
+  border-radius: var(--md-shape-small);
+  background: var(--md-surface-container-lowest);
 }
 
 .migration-confirm-path span {
@@ -420,13 +418,6 @@ onMounted(() => {
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.migration-confirm-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
 }
 
 .setting-card {
@@ -722,17 +713,6 @@ onMounted(() => {
 }
 
 @media (max-width: 980px) {
-  .migration-confirm-panel {
-    grid-template-columns: 42px minmax(0, 1fr);
-    align-items: flex-start;
-  }
-
-  .migration-confirm-actions {
-    width: 100%;
-    grid-column: 1 / -1;
-    justify-content: flex-start;
-  }
-
   .setting-card {
     align-items: flex-start;
     flex-direction: column;
