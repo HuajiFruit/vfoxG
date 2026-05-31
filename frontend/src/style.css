@@ -830,24 +830,6 @@ nav {
   color: #34d399;
 }
 
-.toast-close {
-  background: none;
-  border: none;
-  color: var(--md-on-surface-variant);
-  cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--md-shape-small);
-  transition: all 0.2s;
-}
-
-.toast-close:hover {
-  background-color: var(--md-surface-variant);
-  color: var(--md-on-surface);
-}
-
 .toast-slide-enter-active,
 .toast-slide-leave-active {
   transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
@@ -2525,10 +2507,6 @@ nav {
 
 .toast-progress.success .toast-progress-fill {
   background: var(--status-success);
-}
-
-.toast-close:hover {
-  background: var(--md-surface-container-highest);
 }
 
 .terminal-dock {
