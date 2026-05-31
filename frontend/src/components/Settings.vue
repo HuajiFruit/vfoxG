@@ -1,10 +1,6 @@
 <script lang="ts" setup>
-import { computed, inject, Ref, ref, onMounted } from 'vue';
+import { computed, inject, Ref, ref, onMounted, watch } from 'vue';
 import {
-  CheckVfoxInPath,
-  AddVfoxToPath,
-  RemoveVfoxFromPath,
-  GetPlatformInfo,
   GetDownloadPathInfo,
   SetDownloadPath,
   SetDownloadPathWithMigration,
@@ -17,17 +13,19 @@ import { t, currentLang } from '../i18n';
 
 const theme = inject<Ref<string>>('theme');
 const showTerminal = inject<Ref<boolean>>('showTerminal');
-const isInPath = ref(false);
-const addingToPath = ref(false);
-const removingFromPath = ref(false);
-const checkingPath = ref(true);
-const platformInfo = ref<main.PlatformInfo | null>(null);
 const downloadPathInfo = ref<main.DownloadPathInfo | null>(null);
 const downloadPathInput = ref('');
 const loadingDownloadPath = ref(true);
 const savingDownloadPath = ref(false);
 const selectingDownloadPath = ref(false);
 const resettingDownloadPath = ref(false);
+
+type PendingMigrationAction = {
+  type: 'save' | 'reset';
+  targetPath: string;
+};
+
+const pendingMigration = ref<PendingMigrationAction | null>(null);
 
 const emit = defineEmits(['notify']);
 
@@ -54,21 +52,6 @@ const terminalVisible = computed({
   },
 });
 
-const platformRestartHint = computed(() => {
-  const os = platformInfo.value?.os || 'default';
-  return t(`platform.restart.${os}`) === `platform.restart.${os}`
-    ? t('platform.restart.default')
-    : t(`platform.restart.${os}`);
-});
-
-const pathDescription = computed(() => {
-  if (!platformInfo.value) return t('settings.system.path.desc');
-  return t('settings.system.path.desc.platform', {
-    target: platformInfo.value.vfoxPathTarget,
-    restart: platformRestartHint.value,
-  });
-});
-
 const syncDownloadPathInfo = (info: main.DownloadPathInfo) => {
   downloadPathInfo.value = info;
   downloadPathInput.value = info.path;
@@ -84,15 +67,7 @@ const shouldAskMigration = (targetPath: string) => {
   );
 };
 
-const confirmMigration = () => window.confirm(t('settings.download.path.migrate_confirm'));
-
-const loadPlatformInfo = async () => {
-  try {
-    platformInfo.value = await GetPlatformInfo();
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('settings.platform.load_error')));
-  }
-};
+const isDownloadPathBusy = computed(() => savingDownloadPath.value || resettingDownloadPath.value);
 
 const loadDownloadPath = async () => {
   loadingDownloadPath.value = true;
@@ -106,15 +81,18 @@ const loadDownloadPath = async () => {
 };
 
 const saveDownloadPath = async () => {
+  const targetPath = downloadPathInput.value.trim();
+  if (shouldAskMigration(targetPath)) {
+    pendingMigration.value = { type: 'save', targetPath };
+    return;
+  }
+
+  pendingMigration.value = null;
   savingDownloadPath.value = true;
   try {
-    const migrate = shouldAskMigration(downloadPathInput.value) ? confirmMigration() : false;
-    const info = migrate
-      ? await SetDownloadPathWithMigration(downloadPathInput.value, true)
-      : await SetDownloadPath(downloadPathInput.value);
+    const info = await SetDownloadPath(targetPath);
     syncDownloadPathInfo(info);
-    await loadPlatformInfo();
-    notifySuccess(t(migrate ? 'settings.download.path.migrate_success' : 'settings.download.path.success'));
+    notifySuccess(t('settings.download.path.success'));
   } catch (err) {
     notifyError(getErrorMessage(err, t('settings.download.path.error')));
   } finally {
@@ -137,15 +115,18 @@ const chooseDownloadPath = async () => {
 };
 
 const resetDownloadPath = async () => {
+  const targetPath = downloadPathInfo.value?.defaultPath || '';
+  if (shouldAskMigration(targetPath)) {
+    pendingMigration.value = { type: 'reset', targetPath };
+    return;
+  }
+
+  pendingMigration.value = null;
   resettingDownloadPath.value = true;
   try {
-    const migrate = shouldAskMigration(downloadPathInfo.value?.defaultPath || '') ? confirmMigration() : false;
-    const info = migrate
-      ? await ResetDownloadPathWithMigration(true)
-      : await ResetDownloadPath();
+    const info = await ResetDownloadPath();
     syncDownloadPathInfo(info);
-    await loadPlatformInfo();
-    notifySuccess(t(migrate ? 'settings.download.path.migrate_success' : 'settings.download.path.reset_success'));
+    notifySuccess(t('settings.download.path.reset_success'));
   } catch (err) {
     notifyError(getErrorMessage(err, t('settings.download.path.error')));
   } finally {
@@ -153,59 +134,51 @@ const resetDownloadPath = async () => {
   }
 };
 
-const checkPath = async (notifyOnError = true) => {
-  checkingPath.value = true;
-  try {
-    isInPath.value = await CheckVfoxInPath();
-    return true;
-  } catch (err) {
-    if (notifyOnError) {
-      notifyError(getErrorMessage(err, t('settings.path.check_error')));
+const confirmPendingMigration = async () => {
+  const action = pendingMigration.value;
+  if (!action || isDownloadPathBusy.value) return;
+
+  if (action.type === 'save') {
+    savingDownloadPath.value = true;
+    try {
+      const info = await SetDownloadPathWithMigration(action.targetPath, true);
+      pendingMigration.value = null;
+      syncDownloadPathInfo(info);
+      notifySuccess(t('settings.download.path.migrate_success'));
+    } catch (err) {
+      notifyError(getErrorMessage(err, t('settings.download.path.error')));
+    } finally {
+      savingDownloadPath.value = false;
     }
-    return false;
+    return;
+  }
+
+  resettingDownloadPath.value = true;
+  try {
+    const info = await ResetDownloadPathWithMigration(true);
+    pendingMigration.value = null;
+    syncDownloadPathInfo(info);
+    notifySuccess(t('settings.download.path.migrate_success'));
+  } catch (err) {
+    notifyError(getErrorMessage(err, t('settings.download.path.error')));
   } finally {
-    checkingPath.value = false;
+    resettingDownloadPath.value = false;
   }
 };
 
-const addToPath = async () => {
-  addingToPath.value = true;
-  try {
-    await AddVfoxToPath();
-    const verified = await checkPath(false);
-    if (!verified) {
-      notifyError(t('settings.path.add_verify_error'));
-      return;
-    }
-    notifySuccess(t('settings.path.add_success', { restart: platformRestartHint.value }));
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('settings.path.add_error')));
-  } finally {
-    addingToPath.value = false;
-  }
+const cancelPendingMigration = () => {
+  if (isDownloadPathBusy.value) return;
+  pendingMigration.value = null;
 };
 
-const removeFromPath = async () => {
-  removingFromPath.value = true;
-  try {
-    await RemoveVfoxFromPath();
-    const verified = await checkPath(false);
-    if (!verified) {
-      notifyError(t('settings.path.remove_verify_error'));
-      return;
-    }
-    notifySuccess(t('settings.path.remove_success', { restart: platformRestartHint.value }));
-  } catch (err) {
-    notifyError(getErrorMessage(err, t('settings.path.remove_error')));
-  } finally {
-    removingFromPath.value = false;
+watch(downloadPathInput, (value) => {
+  if (pendingMigration.value?.type === 'save' && value.trim() !== pendingMigration.value.targetPath) {
+    pendingMigration.value = null;
   }
-};
+});
 
 onMounted(() => {
-  loadPlatformInfo();
   loadDownloadPath();
-  checkPath();
 });
 
 </script>
@@ -213,6 +186,29 @@ onMounted(() => {
 <template>
   <div class="settings-view view-container">
     <h2>{{ t('settings.title') }}</h2>
+
+    <div v-if="pendingMigration" class="migration-confirm-panel">
+      <div class="migration-confirm-icon">
+        <span class="material-symbols-outlined">sync_alt</span>
+      </div>
+      <div class="migration-confirm-copy">
+        <h3>{{ t('settings.download.path.migrate_title') }}</h3>
+        <p>{{ t('settings.download.path.migrate_confirm') }}</p>
+        <div class="migration-confirm-path">
+          <span>{{ t('settings.download.path.migrate_target') }}</span>
+          <code>{{ pendingMigration.targetPath }}</code>
+        </div>
+      </div>
+      <div class="migration-confirm-actions">
+        <button class="btn outlined" :disabled="isDownloadPathBusy" @click="cancelPendingMigration">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="btn primary" :disabled="isDownloadPathBusy" @click="confirmPendingMigration">
+          <div v-if="isDownloadPathBusy" class="spinner small-spinner"></div>
+          <template v-else>{{ t('common.confirm') }}</template>
+        </button>
+      </div>
+    </div>
     
     <div class="settings-section">
       <h3 class="section-heading">{{ t('settings.appearance') }}</h3>
@@ -338,49 +334,6 @@ onMounted(() => {
           </div>
         </div>
       </div>
-
-      <div class="setting-card">
-        <div class="setting-info">
-          <h4>{{ t('settings.system.path') }}</h4>
-          <p>{{ pathDescription }}</p>
-        </div>
-        <div class="setting-action">
-          <button 
-            v-if="checkingPath"
-            class="btn" 
-            disabled
-            style="min-width: 160px; display: flex; justify-content: center; align-items: center; background: transparent;"
-          >
-            <div class="spinner small-spinner" style="width: 20px; height: 20px; border-width: 2px; border-color: var(--md-outline) transparent var(--md-outline) transparent;"></div>
-          </button>
-          <button 
-            v-else-if="!isInPath"
-            class="btn primary" 
-            :disabled="addingToPath"
-            @click="addToPath"
-            style="min-width: 140px; display: flex; justify-content: center; align-items: center;"
-          >
-            <div v-if="addingToPath" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
-            <template v-else>
-              {{ t('settings.system.path.add') }}
-            </template>
-          </button>
-          
-          <button 
-            v-else
-            class="btn outlined danger" 
-            :disabled="removingFromPath"
-            @click="removeFromPath"
-            style="min-width: 160px;"
-          >
-            <div v-if="removingFromPath" class="spinner small-spinner" style="width: 16px; height: 16px; border-width: 2px; border-color: var(--md-error) transparent var(--md-error) transparent;"></div>
-            <template v-else>
-              <span class="material-symbols-outlined" style="font-size: 18px; margin-right: 6px;">delete</span>
-              {{ t('settings.system.path.remove') }}
-            </template>
-          </button>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -393,6 +346,87 @@ onMounted(() => {
 
 .settings-section {
   margin-top: 24px;
+}
+
+.migration-confirm-panel {
+  margin-top: 16px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid rgba(255, 188, 77, 0.48);
+  border-radius: var(--md-shape-medium);
+  background:
+    linear-gradient(135deg, rgba(255, 188, 77, 0.15), rgba(115, 214, 208, 0.06)),
+    var(--md-surface-container-low);
+}
+
+.migration-confirm-icon {
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--md-shape-small);
+  background: rgba(255, 188, 77, 0.14);
+  color: var(--md-on-surface);
+}
+
+.migration-confirm-icon span {
+  font-size: 24px;
+}
+
+.migration-confirm-copy {
+  min-width: 0;
+}
+
+.migration-confirm-copy h3 {
+  margin: 0 0 4px;
+  color: var(--md-on-surface);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.migration-confirm-copy p {
+  margin: 0;
+  color: var(--md-on-surface-variant);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.migration-confirm-path {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.migration-confirm-path span {
+  color: var(--md-on-surface-variant);
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+
+.migration-confirm-path code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--md-on-surface);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.migration-confirm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .setting-card {
@@ -688,6 +722,17 @@ onMounted(() => {
 }
 
 @media (max-width: 980px) {
+  .migration-confirm-panel {
+    grid-template-columns: 42px minmax(0, 1fr);
+    align-items: flex-start;
+  }
+
+  .migration-confirm-actions {
+    width: 100%;
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
   .setting-card {
     align-items: flex-start;
     flex-direction: column;

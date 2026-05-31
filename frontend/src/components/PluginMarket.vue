@@ -25,6 +25,7 @@ const selectedPlugin = ref<main.PluginInfo | null>(null);
 // Detail State
 const availableVersions = ref<string[]>([]);
 const installedVersions = ref<Set<string>>(new Set());
+const unreleasedVersions = ref<Set<string>>(new Set());
 const loadingVersions = ref(false);
 const installingVersion = ref<string | null>(null);
 let pluginsFetchSeq = 0;
@@ -60,6 +61,10 @@ const runTask = async (title: string, task: () => Promise<void>) => {
 };
 
 const isBusyError = (err: unknown) => getErrorMessage(err, '').toLowerCase().includes('another terminal task is already running');
+
+const isVersionNotReleasedError = (err: unknown) => {
+  return getErrorMessage(err, '').toLowerCase().includes('version is not released');
+};
 
 const notifyTaskError = (err: unknown, fallback: string) => {
   if (isBusyError(err)) {
@@ -145,6 +150,7 @@ const fetchPluginVersions = async (name: string) => {
   loadingVersions.value = true;
   availableVersions.value = [];
   installedVersions.value = new Set();
+  unreleasedVersions.value = new Set();
   try {
     const results = await SearchVersions(name);
     if (requestId !== versionsFetchSeq) return;
@@ -180,6 +186,7 @@ const openDetail = async (p: main.PluginInfo) => {
   activeView.value = 'detail';
   availableVersions.value = [];
   installedVersions.value = new Set();
+  unreleasedVersions.value = new Set();
   loadingVersions.value = false;
   
   if (p.isAdded) {
@@ -196,6 +203,7 @@ const closeDetail = () => {
     selectedPlugin.value = null;
     availableVersions.value = [];
     installedVersions.value = new Set();
+    unreleasedVersions.value = new Set();
     loadingVersions.value = false;
     detailResetTimer = null;
   }, 300);
@@ -279,6 +287,7 @@ const executeRemovePlugin = async (chosenPath: string | null) => {
 const installVersion = async (pluginName: string, version: string) => {
   installingVersion.value = version;
   try {
+    unreleasedVersions.value = new Set([...unreleasedVersions.value].filter(v => v !== version));
     await runTask(t('task.version.install', { name: pluginName, version }), async () => {
       await InstallVersion(pluginName, version);
       await fetchPlugins();
@@ -288,6 +297,11 @@ const installVersion = async (pluginName: string, version: string) => {
       installedVersions.value.add(version);
     });
   } catch (err) {
+    if (isVersionNotReleasedError(err)) {
+      unreleasedVersions.value = new Set([...unreleasedVersions.value, version]);
+      notifyError(t('sdk.version_not_released'));
+      return;
+    }
     notifyTaskError(err, t('market.install_error', { name: pluginName, version }));
   } finally {
     if (installingVersion.value === version) {
@@ -305,6 +319,7 @@ onMounted(() => {
     selectedPlugin.value = null;
     availableVersions.value = [];
     installedVersions.value = new Set();
+    unreleasedVersions.value = new Set();
     loadingVersions.value = false;
     activeView.value = 'list';
     fetchPlugins();
@@ -453,6 +468,7 @@ onUnmounted(() => {
                 <span>{{ ver }}</span>
                 <div class="plugin-actions">
                   <span v-if="installedVersions.has(ver)" class="btn tonal small" style="pointer-events: none; width: 96px; padding: 0; display: flex; justify-content: center; align-items: center; color: #34d399; font-weight: 600; text-transform: uppercase;">{{ t('market.installed') }}</span>
+                  <span v-else-if="unreleasedVersions.has(ver)" class="version-status-pill unreleased">{{ t('sdk.version_not_released') }}</span>
                   <button 
                     v-else 
                     class="btn tonal small" 

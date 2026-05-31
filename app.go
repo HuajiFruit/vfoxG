@@ -298,6 +298,7 @@ func (a *App) runVfoxWithProgress(args []string) error {
 
 	var outputMu sync.Mutex
 	lastOutput := ""
+	releaseStatusOutput := ""
 	emitOutputLine := func(line string) {
 		cleanLine := ansiRegex.ReplaceAllString(line, "")
 		if cleanLine == "" {
@@ -305,6 +306,9 @@ func (a *App) runVfoxWithProgress(args []string) error {
 		}
 		outputMu.Lock()
 		lastOutput = cleanLine
+		if isVersionNotReleasedOutput(cleanLine) {
+			releaseStatusOutput = cleanLine
+		}
 		outputMu.Unlock()
 		a.emitEvent("vfox-log", cleanLine)
 	}
@@ -368,6 +372,9 @@ func (a *App) runVfoxWithProgress(args []string) error {
 	if err != nil {
 		outputMu.Lock()
 		detail := strings.TrimSpace(lastOutput)
+		if releaseStatusOutput != "" {
+			detail = strings.TrimSpace(releaseStatusOutput)
+		}
 		outputMu.Unlock()
 		if detail == "" {
 			detail = err.Error()
@@ -380,6 +387,11 @@ func (a *App) runVfoxWithProgress(args []string) error {
 
 	a.emitEvent("vfox-log", "[DONE]")
 	return nil
+}
+
+func isVersionNotReleasedOutput(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.Contains(lower, "version is not released")
 }
 
 func (a *App) tryStartVfoxTask() (func(), error) {
@@ -554,11 +566,13 @@ func normalizeDownloadPath(path string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
-var vfoxHomeMigrationEntries = []string{
-	".vfox.toml",
-	"cache",
-	"plugin",
-	"sdks",
+type MigrationProgress struct {
+	Stage              string `json:"stage"`
+	Current            string `json:"current"`
+	Completed          int    `json:"completed"`
+	Total              int    `json:"total"`
+	Percent            int    `json:"percent"`
+	EstimatedRemaining int    `json:"estimatedRemaining"`
 }
 
 func hasMigratableVfoxHomeData(path string) (bool, error) {
@@ -566,19 +580,20 @@ func hasMigratableVfoxHomeData(path string) (bool, error) {
 	if path == "" {
 		return false, nil
 	}
-	for _, entry := range vfoxHomeMigrationEntries {
-		entryPath := filepath.Join(path, entry)
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
 		info, err := os.Lstat(entryPath)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
 			return false, err
 		}
-		if info.IsDir() {
-			if hasDirectoryEntries(entryPath) {
-				return true, nil
-			}
+		if info.IsDir() && !hasDirectoryEntries(entryPath) {
 			continue
 		}
 		return true, nil
@@ -606,23 +621,137 @@ func (a *App) migrateVfoxHomeData(from string, to string) error {
 	if err := os.MkdirAll(to, 0755); err != nil {
 		return err
 	}
-	for _, entry := range vfoxHomeMigrationEntries {
-		src := filepath.Join(from, entry)
-		if _, err := os.Lstat(src); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return err
-		}
-		if err := a.copyPathNoOverwrite(src, filepath.Join(to, entry), from, to); err != nil {
-			return fmt.Errorf("failed to migrate %s: %w", entry, err)
+
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		return err
+	}
+	total, err := countMigrationItems(from)
+	if err != nil {
+		return err
+	}
+	startedAt := time.Now()
+	a.emitMigrationProgress("preparing", "", 0, total, startedAt)
+	tracker := &migrationTracker{
+		app:       a,
+		total:     total,
+		startedAt: startedAt,
+		oldRoot:   from,
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		src := filepath.Join(from, name)
+		if err := a.copyPathNoOverwriteWithProgress(src, filepath.Join(to, name), from, to, tracker); err != nil {
+			a.emitMigrationProgress("error", tracker.current, tracker.completed, total, startedAt)
+			return fmt.Errorf("failed to migrate %s: %w", name, err)
 		}
 	}
+	a.emitMigrationProgress("done", "", total, total, startedAt)
 	a.emitEvent("vfox-log", "[INFO] Migrated vfox SDK data to "+to)
 	return nil
 }
 
+type migrationTracker struct {
+	app       *App
+	total     int
+	completed int
+	current   string
+	startedAt time.Time
+	oldRoot   string
+}
+
+func (m *migrationTracker) start(path string) {
+	if m == nil {
+		return
+	}
+	m.current = migrationDisplayPath(path, m.oldRoot)
+	m.app.emitMigrationProgress("copying", m.current, m.completed, m.total, m.startedAt)
+}
+
+func (m *migrationTracker) finish(path string) {
+	if m == nil {
+		return
+	}
+	m.current = migrationDisplayPath(path, m.oldRoot)
+	m.completed++
+	m.app.emitMigrationProgress("copying", m.current, m.completed, m.total, m.startedAt)
+}
+
+func migrationDisplayPath(path string, root string) string {
+	if rel, err := filepath.Rel(root, path); err == nil && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+		return rel
+	}
+	return filepath.Base(path)
+}
+
+func countMigrationItems(root string) (int, error) {
+	total := 0
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return 0, err
+	}
+	for _, entry := range entries {
+		count, err := countMigrationPathItems(filepath.Join(root, entry.Name()))
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
+}
+
+func countMigrationPathItems(path string) (int, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0, err
+	}
+	total := 1
+	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeIrregular != 0 || !info.IsDir() {
+		return total, nil
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return 0, err
+	}
+	for _, entry := range entries {
+		count, err := countMigrationPathItems(filepath.Join(path, entry.Name()))
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
+}
+
+func (a *App) emitMigrationProgress(stage string, current string, completed int, total int, startedAt time.Time) {
+	percent := 0
+	if total > 0 {
+		percent = int(float64(completed) / float64(total) * 100)
+		if percent > 100 {
+			percent = 100
+		}
+	}
+	estimatedRemaining := 0
+	if completed > 0 && total > completed {
+		elapsed := time.Since(startedAt).Seconds()
+		perItem := elapsed / float64(completed)
+		estimatedRemaining = int(perItem * float64(total-completed))
+	}
+	a.emitEvent("migration-progress", MigrationProgress{
+		Stage:              stage,
+		Current:            current,
+		Completed:          completed,
+		Total:              total,
+		Percent:            percent,
+		EstimatedRemaining: estimatedRemaining,
+	})
+}
+
 func (a *App) copyPathNoOverwrite(src string, dst string, oldRoot string, newRoot string) error {
+	return a.copyPathNoOverwriteWithProgress(src, dst, oldRoot, newRoot, nil)
+}
+
+func (a *App) copyPathNoOverwriteWithProgress(src string, dst string, oldRoot string, newRoot string, tracker *migrationTracker) error {
 	info, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -631,6 +760,10 @@ func (a *App) copyPathNoOverwrite(src string, dst string, oldRoot string, newRoo
 		return fmt.Errorf("destination already exists: %s", dst)
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+
+	if tracker != nil {
+		tracker.start(src)
 	}
 
 	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeIrregular != 0 {
@@ -649,24 +782,43 @@ func (a *App) copyPathNoOverwrite(src string, dst string, oldRoot string, newRoo
 			}
 			target = filepath.Join(newRoot, rel)
 		}
-		return a.ensureJunction(dst, target)
+		if err := a.ensureJunction(dst, target); err != nil {
+			return err
+		}
+		if tracker != nil {
+			tracker.finish(src)
+		}
+		return nil
 	}
 	if info.IsDir() {
-		return a.copyDirNoOverwrite(src, dst, info.Mode().Perm(), oldRoot, newRoot)
+		return a.copyDirNoOverwriteWithProgress(src, dst, info.Mode().Perm(), oldRoot, newRoot, tracker)
 	}
-	return copyFileNoOverwrite(src, dst, info.Mode().Perm())
+	if err := copyFileNoOverwrite(src, dst, info.Mode().Perm()); err != nil {
+		return err
+	}
+	if tracker != nil {
+		tracker.finish(src)
+	}
+	return nil
 }
 
 func (a *App) copyDirNoOverwrite(src string, dst string, perm os.FileMode, oldRoot string, newRoot string) error {
+	return a.copyDirNoOverwriteWithProgress(src, dst, perm, oldRoot, newRoot, nil)
+}
+
+func (a *App) copyDirNoOverwriteWithProgress(src string, dst string, perm os.FileMode, oldRoot string, newRoot string, tracker *migrationTracker) error {
 	if err := os.MkdirAll(dst, perm); err != nil {
 		return err
+	}
+	if tracker != nil {
+		tracker.finish(src)
 	}
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if err := a.copyPathNoOverwrite(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), oldRoot, newRoot); err != nil {
+		if err := a.copyPathNoOverwriteWithProgress(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name()), oldRoot, newRoot, tracker); err != nil {
 			return err
 		}
 	}

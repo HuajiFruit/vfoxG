@@ -49,6 +49,7 @@ VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 ManifestDPIAware true
 
 !include "MUI.nsh"
+!include "nsDialogs.nsh"
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
@@ -57,6 +58,8 @@ ManifestDPIAware true
 !define MUI_ABORTWARNING # This will warn the user if they exit from the installer.
 
 Var IsUpgrade
+Var UnRemoveSdkData
+Var UnSdkDataCheckbox
 
 !insertmacro MUI_PAGE_WELCOME # Welcome to the installer page.
 # !insertmacro MUI_PAGE_LICENSE "resources\eula.txt" # Adds a EULA page to the installer
@@ -65,6 +68,7 @@ Var IsUpgrade
 !insertmacro MUI_PAGE_INSTFILES # Installing page.
 !insertmacro MUI_PAGE_FINISH # Finished installation page.
 
+UninstPage custom un.SdkDataOptionsPage un.SdkDataOptionsPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
 
 !insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
@@ -85,10 +89,17 @@ Function SkipDirIfUpgrade
 FunctionEnd
 
 Function CloseRunningApp
-    DetailPrint "Closing running ${INFO_PRODUCTNAME}..."
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T /F'
+    nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH'
     Pop $R9
-    Sleep 1000
+    Pop $R8
+    StrLen $R7 "${PRODUCT_EXECUTABLE}"
+    StrCpy $R6 $R8 $R7
+    StrCmp $R6 "${PRODUCT_EXECUTABLE}" 0 done
+        DetailPrint "Closing running ${INFO_PRODUCTNAME}..."
+        nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T /F'
+        Pop $R9
+        Sleep 1000
+    done:
 FunctionEnd
 
 Function .onInit
@@ -162,7 +173,10 @@ Section "uninstall"
     InitPluginsDir
     SetOutPath "$PLUGINSDIR"
     File "cleanup_vfoxg.ps1"
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\cleanup_vfoxg.ps1" -InstallDir "$INSTDIR" -ProductName "${INFO_PRODUCTNAME}" -ProductExecutable "${PRODUCT_EXECUTABLE}"'
+    StrCpy $0 ""
+    StrCmp $UnRemoveSdkData 1 0 +2
+        StrCpy $0 "-RemoveSdkData"
+    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\cleanup_vfoxg.ps1" -InstallDir "$INSTDIR" -ProductName "${INFO_PRODUCTNAME}" -ProductExecutable "${PRODUCT_EXECUTABLE}" $0'
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
@@ -178,8 +192,37 @@ Section "uninstall"
 SectionEnd
 
 Function un.CloseRunningApp
-    DetailPrint "Closing running ${INFO_PRODUCTNAME}..."
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T /F'
+    nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /FI "IMAGENAME eq ${PRODUCT_EXECUTABLE}" /NH'
     Pop $R9
-    Sleep 1000
+    Pop $R8
+    StrLen $R7 "${PRODUCT_EXECUTABLE}"
+    StrCpy $R6 $R8 $R7
+    StrCmp $R6 "${PRODUCT_EXECUTABLE}" 0 done
+        DetailPrint "Closing running ${INFO_PRODUCTNAME}..."
+        nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "${PRODUCT_EXECUTABLE}" /T /F'
+        Pop $R9
+        Sleep 1000
+    done:
+FunctionEnd
+
+Function un.SdkDataOptionsPage
+    IfSilent 0 +2
+        Abort
+    !insertmacro MUI_HEADER_TEXT "Remove downloaded SDK data?" "Environment variables are always removed. You can choose whether to delete downloaded SDKs."
+    nsDialogs::Create 1018
+    Pop $0
+    StrCmp $0 error 0 +2
+        Abort
+
+    ${NSD_CreateLabel} 0 0 100% 34u "Uninstall will remove vfoxG, shortcuts, PATH entries, VFOX_HOME, and vfoxG SDK PATH overrides."
+    Pop $0
+    ${NSD_CreateCheckbox} 0 46u 100% 24u "Also delete downloaded SDKs, plugins, cache, and vfoxG SDK metadata"
+    Pop $UnSdkDataCheckbox
+    ${NSD_Uncheck} $UnSdkDataCheckbox
+
+    nsDialogs::Show
+FunctionEnd
+
+Function un.SdkDataOptionsPageLeave
+    ${NSD_GetState} $UnSdkDataCheckbox $UnRemoveSdkData
 FunctionEnd

@@ -1,7 +1,8 @@
 param(
     [string]$InstallDir,
     [string]$ProductName,
-    [string]$ProductExecutable
+    [string]$ProductExecutable,
+    [switch]$RemoveSdkData
 )
 
 $ErrorActionPreference = 'Continue'
@@ -81,32 +82,119 @@ function Remove-DirectoryIfExists($Path) {
     }
 }
 
+function Remove-FileIfExists($Path) {
+    if ($Path -and (Test-Path -LiteralPath $Path)) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-DirectoryIfEmpty($Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    try {
+        $remaining = @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop)
+        if ($remaining.Count -eq 0) {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        return
+    }
+}
+
+function Add-UniquePathRoot([System.Collections.Generic.List[string]]$Roots, [string]$Path) {
+    $trimmed = "$Path".Trim()
+    if ($trimmed -eq '') { return }
+    $normalized = Normalize-PathValue $trimmed
+    foreach ($existing in $Roots) {
+        if ((Normalize-PathValue $existing) -eq $normalized) {
+            return
+        }
+    }
+    $Roots.Add($trimmed)
+}
+
+function Add-VfoxHomeRoots([System.Collections.Generic.List[string]]$Roots, [string]$VfoxHomePath) {
+    $home = "$VfoxHomePath".Trim()
+    if ($home -eq '') { return }
+    Add-UniquePathRoot $Roots $home
+    Add-UniquePathRoot $Roots (Join-Path $home 'cache')
+    Add-UniquePathRoot $Roots (Join-Path $home 'sdks')
+    Add-UniquePathRoot $Roots (Join-Path $home 'path-shims')
+}
+
+function Read-ConfiguredVfoxHome([string]$ConfigFile) {
+    if (-not (Test-Path -LiteralPath $ConfigFile)) { return '' }
+    try {
+        $config = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
+        if ($null -ne $config.PSObject.Properties['vfoxHome']) {
+            return "$($config.vfoxHome)".Trim()
+        }
+    } catch {
+        Write-Host "vfoxG cleanup: unable to read config: $($_.Exception.Message)"
+    }
+    return ''
+}
+
+function Read-HijackData([string]$HijackDataFile) {
+    if (-not (Test-Path -LiteralPath $HijackDataFile)) { return $null }
+    try {
+        return Get-Content -LiteralPath $HijackDataFile -Raw | ConvertFrom-Json
+    } catch {
+        Write-Host "vfoxG cleanup: unable to read hijack data: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Remove-VfoxHomeDataIfExists([string]$VfoxHomePath) {
+    $home = "$VfoxHomePath".Trim()
+    if ($home -eq '' -or -not (Test-Path -LiteralPath $home)) { return }
+
+    foreach ($name in @(
+        'cache',
+        'plugin',
+        'sdks',
+        'path-shims',
+        '.vfox.toml',
+        'hijacked_paths.json',
+        'gui-plugins-cache.json',
+        'gui-system-sdks-cache.json',
+        'gui-non-vfox-sdks.json'
+    )) {
+        $path = Join-Path $home $name
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            Remove-DirectoryIfExists $path
+        } else {
+            Remove-FileIfExists $path
+        }
+    }
+
+    Remove-DirectoryIfEmpty $home
+}
+
 $appData = [Environment]::GetFolderPath('ApplicationData')
 $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
 $userProfile = [Environment]::GetFolderPath('UserProfile')
+$configRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) $ProductName
+$configFile = Join-Path $configRoot 'config.json'
+$configuredVfoxHome = Read-ConfiguredVfoxHome $configFile
 $vfoxRoot = Join-Path $appData $ProductName
-$vfoxHome = Join-Path $vfoxRoot 'vfox-home'
-$hijackFile = Join-Path $vfoxHome 'hijacked_paths.json'
-$shimDir = Join-Path $vfoxHome 'path-shims'
-$sdksDir = Join-Path $vfoxHome 'sdks'
+$defaultVfoxHome = Join-Path $vfoxRoot 'vfox-home'
+$vfoxHome = if ($configuredVfoxHome) { $configuredVfoxHome } else { $defaultVfoxHome }
+$hijackFiles = New-Object System.Collections.Generic.List[string]
+Add-UniquePathRoot $hijackFiles (Join-Path $vfoxHome 'hijacked_paths.json')
+Add-UniquePathRoot $hijackFiles (Join-Path $defaultVfoxHome 'hijacked_paths.json')
 $legacyVfoxHome = Join-Path $userProfile '.vfox'
-$legacyShimDir = Join-Path $legacyVfoxHome 'path-shims'
-$legacySdksDir = Join-Path $legacyVfoxHome 'sdks'
+Add-UniquePathRoot $hijackFiles (Join-Path $legacyVfoxHome 'hijacked_paths.json')
+$managedPathRoots = New-Object System.Collections.Generic.List[string]
 
-$managedPathRoots = @(
-    $InstallDir,
-    (Join-Path $InstallDir 'core'),
-    $shimDir,
-    $sdksDir,
-    $vfoxHome,
-    $legacyShimDir,
-    $legacySdksDir,
-    $legacyVfoxHome
-)
+Add-UniquePathRoot $managedPathRoots $InstallDir
+Add-UniquePathRoot $managedPathRoots (Join-Path $InstallDir 'core')
+Add-VfoxHomeRoots $managedPathRoots $vfoxHome
+Add-VfoxHomeRoots $managedPathRoots $defaultVfoxHome
+Add-VfoxHomeRoots $managedPathRoots $legacyVfoxHome
 
-if (Test-Path -LiteralPath $hijackFile) {
-    try {
-        $data = Get-Content -LiteralPath $hijackFile -Raw | ConvertFrom-Json
+foreach ($hijackFile in @($hijackFiles)) {
+    $data = Read-HijackData $hijackFile
+    if ($null -ne $data) {
         foreach ($property in @($data.PSObject.Properties)) {
             $entry = $property.Value
             if ($null -ne $entry.PSObject.Properties['UserPaths']) {
@@ -116,22 +204,41 @@ if (Test-Path -LiteralPath $hijackFile) {
                 Add-PathEntries 'Machine' @($entry.MachinePaths)
             }
             if ($null -ne $entry.PSObject.Properties['ShimDir']) {
-                $managedPathRoots += "$($entry.ShimDir)"
+                Add-UniquePathRoot $managedPathRoots "$($entry.ShimDir)"
             }
         }
-    } catch {
-        Write-Host "vfoxG cleanup: unable to read hijack data: $($_.Exception.Message)"
     }
 }
 
 Remove-ManagedPathEntries 'User' $managedPathRoots
 Remove-ManagedPathEntries 'Machine' $managedPathRoots
+[Environment]::SetEnvironmentVariable('VFOX_HOME', $null, 'User')
+[Environment]::SetEnvironmentVariable('VFOX_HOME', $null, 'Machine')
+[Environment]::SetEnvironmentVariable('__VFOX_SHELL', $null, 'User')
+[Environment]::SetEnvironmentVariable('__VFOX_SHELL', $null, 'Machine')
+
+foreach ($hijackFile in @($hijackFiles)) {
+    if (Test-Path -LiteralPath $hijackFile) {
+        Remove-Item -LiteralPath $hijackFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
+foreach ($home in @($vfoxHome, $defaultVfoxHome, $legacyVfoxHome)) {
+    $shimPath = Join-Path $home 'path-shims'
+    Remove-DirectoryIfExists $shimPath
+}
 
 Remove-DirectoryIfExists (Join-Path $appData $ProductExecutable)
 Remove-DirectoryIfExists (Join-Path $localAppData $ProductExecutable)
-Remove-DirectoryIfExists $vfoxRoot
 Remove-DirectoryIfExists (Join-Path $localAppData $ProductName)
-Remove-DirectoryIfExists $legacyVfoxHome
+
+if ($RemoveSdkData) {
+    Remove-DirectoryIfExists $vfoxRoot
+    if ($configuredVfoxHome -and -not (Test-PathUnderRoot $configuredVfoxHome $vfoxRoot)) {
+        Remove-VfoxHomeDataIfExists $configuredVfoxHome
+    }
+    Remove-VfoxHomeDataIfExists $legacyVfoxHome
+}
 
 try {
     Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'

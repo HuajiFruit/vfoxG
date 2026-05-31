@@ -138,6 +138,7 @@ const taskStatus = ref<ToastStatus>('running');
 const lastLogLine = ref('');
 const taskProgress = ref(0);
 const hasTaskProgress = ref(false);
+const taskDownloadSpeed = ref('');
 const taskHadError = ref(false);
 type TaskPhase = 'default' | 'download' | 'install';
 const taskPhase = ref<TaskPhase>('default');
@@ -145,6 +146,7 @@ const taskUsesDownloadThenInstall = ref(false);
 let autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let offVfoxLog: (() => void) | null = null;
 let offVfoxBusy: (() => void) | null = null;
+let offMigrationProgress: (() => void) | null = null;
 type TerminalLogLevel = 'info' | 'success' | 'error';
 type TerminalLogEntry = {
   id: number;
@@ -157,6 +159,24 @@ const terminalLogs = ref<TerminalLogEntry[]>([]);
 const terminalBody = ref<HTMLElement | null>(null);
 let terminalLogId = 0;
 const maxTerminalLogs = 500;
+type MigrationProgress = {
+  stage: 'preparing' | 'copying' | 'done' | 'error' | string;
+  current: string;
+  completed: number;
+  total: number;
+  percent: number;
+  estimatedRemaining: number;
+};
+const migrationVisible = ref(false);
+const migrationProgress = ref<MigrationProgress>({
+  stage: 'preparing',
+  current: '',
+  completed: 0,
+  total: 0,
+  percent: 0,
+  estimatedRemaining: 0,
+});
+let migrationCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 const getTerminalLogLevel = (log: string): TerminalLogLevel => {
   if (isTaskErrorLog(log)) return 'error';
@@ -197,12 +217,28 @@ const clearTerminalLogs = () => {
   terminalLogs.value = [];
 };
 
+const formatRemainingTime = (seconds: number) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return t('migration.estimate.calculating');
+  if (seconds < 60) return t('migration.estimate.seconds', { seconds });
+  return t('migration.estimate.minutes', { minutes: Math.ceil(seconds / 60) });
+};
+
 const extractProgressPercent = (log: string): number | null => {
   const matches = [...log.matchAll(/(\d{1,3})(?:\.\d+)?\s*%/g)];
   if (!matches.length) return null;
   const latest = Number(matches[matches.length - 1][1]);
   if (Number.isNaN(latest)) return null;
   return Math.max(0, Math.min(100, latest));
+};
+
+const extractDownloadSpeed = (log: string): string => {
+  const matches = [...log.matchAll(/(\d+(?:\.\d+)?)\s*([KMGT]?i?B|[KMGT]?B|bytes?)\s*\/\s*s(?:ec(?:ond)?|econd)?/gi)];
+  if (!matches.length) return '';
+  const latest = matches[matches.length - 1];
+  const value = Number(latest[1]);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  const unit = latest[2].replace(/^b$/i, 'B');
+  return `${latest[1]} ${unit}/s`;
 };
 
 const getTaskPhaseFromLog = (log: string): TaskPhase | null => {
@@ -245,6 +281,7 @@ const isDownloadThenInstallTask = (title: string) => {
 const clearTaskProgress = () => {
   taskProgress.value = 0;
   hasTaskProgress.value = false;
+  taskDownloadSpeed.value = '';
 };
 
 const enterInstallPhase = () => {
@@ -329,6 +366,7 @@ const handleNotify = (payload: NotifyPayload) => {
   taskStatus.value = notification.type;
   taskProgress.value = notification.type === 'success' ? 100 : 0;
   hasTaskProgress.value = notification.type === 'success';
+  taskDownloadSpeed.value = '';
   taskHadError.value = notification.type === 'error';
   taskUsesDownloadThenInstall.value = false;
   taskPhase.value = 'default';
@@ -367,6 +405,7 @@ onMounted(() => {
     }
 
     const parsedProgress = extractProgressPercent(log);
+    const parsedSpeed = extractDownloadSpeed(log);
     const nextTaskPhase = getTaskPhaseFromLog(log);
     const shouldEnterInstallAfterDownload = taskUsesDownloadThenInstall.value && parsedProgress !== null && parsedProgress >= 100;
     let runningLogLine = log;
@@ -375,6 +414,9 @@ onMounted(() => {
       taskPhase.value = 'download';
       taskProgress.value = parsedProgress;
       hasTaskProgress.value = true;
+      if (parsedSpeed) {
+        taskDownloadSpeed.value = parsedSpeed;
+      }
     }
     if (taskStatus.value === 'running' && (nextTaskPhase === 'install' || shouldEnterInstallAfterDownload)) {
       enterInstallPhase();
@@ -395,6 +437,7 @@ onMounted(() => {
       lastLogLine.value = t('toast.completed');
       taskProgress.value = 100;
       hasTaskProgress.value = true;
+      taskDownloadSpeed.value = '';
     } else if (isTaskErrorLog(log)) {
       taskHadError.value = true;
       taskStatus.value = 'error';
@@ -413,6 +456,28 @@ onMounted(() => {
     showTaskToast.value = true;
     showBusyHint();
   });
+
+  offMigrationProgress = EventsOn('migration-progress', (progress: MigrationProgress) => {
+    if (migrationCloseTimer) {
+      clearTimeout(migrationCloseTimer);
+      migrationCloseTimer = null;
+    }
+    migrationProgress.value = {
+      stage: progress.stage || 'copying',
+      current: progress.current || '',
+      completed: progress.completed || 0,
+      total: progress.total || 0,
+      percent: Math.max(0, Math.min(100, progress.percent || 0)),
+      estimatedRemaining: progress.estimatedRemaining || 0,
+    };
+    migrationVisible.value = true;
+    if (progress.stage === 'done') {
+      migrationCloseTimer = setTimeout(() => {
+        migrationVisible.value = false;
+        migrationCloseTimer = null;
+      }, 1200);
+    }
+  });
 });
 
 onUnmounted(() => {
@@ -425,8 +490,13 @@ onUnmounted(() => {
     offVfoxBusy();
     offVfoxBusy = null;
   }
+  if (offMigrationProgress) {
+    offMigrationProgress();
+    offMigrationProgress = null;
+  }
   if (autoCloseTimer) clearTimeout(autoCloseTimer);
   if (busyHintTimer) clearTimeout(busyHintTimer);
+  if (migrationCloseTimer) clearTimeout(migrationCloseTimer);
 });
 </script>
 
@@ -506,7 +576,10 @@ onUnmounted(() => {
                   :style="toastProgressStyle"
                 ></div>
               </div>
-              <div v-if="isDeterminateDownloadProgress" class="toast-progress-label">{{ taskProgress }}%</div>
+              <div v-if="isDeterminateDownloadProgress" class="toast-progress-meta">
+                <span class="toast-download-speed">{{ taskDownloadSpeed }}</span>
+                <span class="toast-progress-label">{{ taskProgress }}%</span>
+              </div>
               <Transition name="busy-hint">
                 <div v-if="busyHintVisible" class="toast-busy-hint">{{ t('toast.please_wait') }}</div>
               </Transition>
@@ -546,5 +619,41 @@ onUnmounted(() => {
         </section>
       </Transition>
     </div>
+
+    <Transition name="migration-fade">
+      <div v-if="migrationVisible" class="migration-overlay" role="status" aria-live="polite">
+        <div class="migration-dialog">
+          <div class="migration-icon">
+            <span class="material-symbols-outlined">
+              {{ migrationProgress.stage === 'done' ? 'check_circle' : migrationProgress.stage === 'error' ? 'error' : 'drive_folder_upload' }}
+            </span>
+          </div>
+          <div class="migration-content">
+            <p class="migration-kicker">{{ t('migration.kicker') }}</p>
+            <h3>
+              {{
+                migrationProgress.stage === 'done'
+                  ? t('migration.done')
+                  : migrationProgress.stage === 'preparing'
+                    ? t('migration.preparing')
+                    : t('migration.copying')
+              }}
+            </h3>
+            <div class="migration-current">
+              <span>{{ t('migration.current') }}</span>
+              <code>{{ migrationProgress.current || t('migration.scanning') }}</code>
+            </div>
+            <div class="migration-progress-bar">
+              <div class="migration-progress-fill" :style="{ width: `${migrationProgress.percent}%` }"></div>
+            </div>
+            <div class="migration-meta">
+              <span>{{ migrationProgress.completed }} / {{ migrationProgress.total }}</span>
+              <span>{{ migrationProgress.percent }}%</span>
+              <span>{{ formatRemainingTime(migrationProgress.estimatedRemaining) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>

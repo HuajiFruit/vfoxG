@@ -722,6 +722,9 @@ func TestSetDownloadPathWithMigrationCopiesVfoxData(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(current, "plugin", "python"), 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(current, "path-shims"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(current, ".vfox.toml"), []byte("python = \"3.13.13\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -729,6 +732,18 @@ func TestSetDownloadPathWithMigrationCopiesVfoxData(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(current, "plugin", "python", "metadata.lua"), []byte("metadata"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "gui-plugins-cache.json"), []byte(`{"plugins":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "gui-non-vfox-sdks.json"), []byte(`{"python":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "hijacked_paths.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "path-shims", "python.cmd"), []byte("@echo off\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -750,6 +765,10 @@ func TestSetDownloadPathWithMigrationCopiesVfoxData(t *testing.T) {
 		filepath.Join(target, ".vfox.toml"),
 		filepath.Join(target, "cache", "python", "version.txt"),
 		filepath.Join(target, "plugin", "python", "metadata.lua"),
+		filepath.Join(target, "gui-plugins-cache.json"),
+		filepath.Join(target, "gui-non-vfox-sdks.json"),
+		filepath.Join(target, "hijacked_paths.json"),
+		filepath.Join(target, "path-shims", "python.cmd"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected migrated path %s: %v", path, err)
@@ -939,5 +958,15 @@ func TestRemoveNonVfoxSdkUsesNormalizedPath(t *testing.T) {
 
 	if got := app.GetNonVfoxSdksMap()["python"]; len(got) != 0 {
 		t.Fatalf("custom SDK was not removed: %+v", got)
+	}
+}
+
+func TestIsVersionNotReleasedOutput(t *testing.T) {
+	line := `plugin [PreInstall] method error: C:\Users\test\vfox-home\plugin\python\hooks\pre_install.lua:10: The current version is not released`
+	if !isVersionNotReleasedOutput(line) {
+		t.Fatal("expected pre_install release error to be detected")
+	}
+	if isVersionNotReleasedOutput("failed to install python") {
+		t.Fatal("generic install failure should not be treated as unreleased")
 	}
 }

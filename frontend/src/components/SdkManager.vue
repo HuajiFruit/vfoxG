@@ -16,6 +16,7 @@ const searchingFor = ref<string | null>(null);
 const searchResults = ref<string[]>([]);
 const searchLoading = ref(false);
 const searchQuery = ref('');
+const unreleasedVersions = ref<Record<string, Record<string, boolean>>>({});
 
 const sdkDetails = ref<Record<string, main.SdkDetail>>({});
 const detailError = ref<Record<string, boolean>>({});
@@ -284,6 +285,40 @@ const truncateVersion = (version?: string, maxLength = 30) => {
   return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
 };
 
+const normalizeVersionKey = (version?: string) => (version || '')
+  .trim()
+  .replace(/^v/i, '')
+  .toLowerCase();
+
+const isSearchVersionInstalled = (name: string, version: string) => {
+  const target = normalizeVersionKey(formatVersionTitle(name, version));
+  if (!target) return false;
+  const detailVersions = sdkDetails.value[name]?.versions || [];
+  return detailVersions.some(v => normalizeVersionKey(formatVersionTitle(name, v.version)) === target);
+};
+
+const isVersionNotReleasedError = (err: unknown) => {
+  return getErrorMessage(err, '').toLowerCase().includes('version is not released');
+};
+
+const markVersionUnreleased = (name: string, version: string) => {
+  const key = normalizeVersionKey(formatVersionTitle(name, version));
+  if (!key) return;
+  unreleasedVersions.value[name] ||= {};
+  unreleasedVersions.value[name][key] = true;
+};
+
+const clearVersionUnreleased = (name: string, version: string) => {
+  const key = normalizeVersionKey(formatVersionTitle(name, version));
+  if (!key || !unreleasedVersions.value[name]) return;
+  delete unreleasedVersions.value[name][key];
+};
+
+const isSearchVersionUnreleased = (name: string, version: string) => {
+  const key = normalizeVersionKey(formatVersionTitle(name, version));
+  return Boolean(key && unreleasedVersions.value[name]?.[key]);
+};
+
 const safeSdkList = (value: main.SdkInfo[] | null | undefined) => Array.isArray(value) ? value : [];
 
 const mergeSdkLists = (vfox: main.SdkInfo[] | null | undefined, system: main.SdkInfo[] | null | undefined) => {
@@ -511,6 +546,7 @@ watch(
 
 const handleInstall = async (name: string, version: string) => {
   try {
+    clearVersionUnreleased(name, version);
     await runTask(t('task.version.install', { name, version }), async () => {
       await InstallVersion(name, version);
       await fetchDetail(name, ++detailFetchSeq);
@@ -519,13 +555,13 @@ const handleInstall = async (name: string, version: string) => {
       const newPath = await GetVersionPath(name, version);
       versionPaths.value[name] ||= {};
       versionPaths.value[name][version] = newPath;
-
-      if (searchingFor.value === name) {
-        searchResults.value = [];
-        searchingFor.value = null;
-      }
     });
   } catch (err) {
+    if (isVersionNotReleasedError(err)) {
+      markVersionUnreleased(name, version);
+      notifyError(t('sdk.version_not_released'));
+      return;
+    }
     notifyTaskError(err, t('sdk.install_error', { name, version }));
   }
 };
@@ -933,9 +969,18 @@ const openSync = () => {
                   </div>
                   <div v-if="searchLoading" class="flex-center" style="padding: 24px;"><div class="spinner"></div></div>
                   <div v-else class="search-results-grid">
-                    <button v-for="ver in filteredSearchResults" :key="ver" class="search-result-card" @click="handleInstall(selectedSdk.name, ver)">
-                      {{ ver }}
-                      <span class="install-text">{{ t('market.install') }}</span>
+                    <button
+                      v-for="ver in filteredSearchResults"
+                      :key="ver"
+                      class="search-result-card"
+                      :class="{ installed: isSearchVersionInstalled(selectedSdk.name, ver), unreleased: isSearchVersionUnreleased(selectedSdk.name, ver) }"
+                      :disabled="isSearchVersionInstalled(selectedSdk.name, ver) || isSearchVersionUnreleased(selectedSdk.name, ver)"
+                      @click="handleInstall(selectedSdk.name, ver)"
+                    >
+                      <span>{{ ver }}</span>
+                      <span v-if="isSearchVersionInstalled(selectedSdk.name, ver)" class="installed-text">{{ t('market.installed') }}</span>
+                      <span v-else-if="isSearchVersionUnreleased(selectedSdk.name, ver)" class="unreleased-text">{{ t('sdk.version_not_released') }}</span>
+                      <span v-else class="install-text">{{ t('market.install') }}</span>
                     </button>
                     <div v-if="!filteredSearchResults.length" class="empty-state" style="grid-column: 1/-1;">{{ t('sdk.no_matching_versions') }}</div>
                   </div>

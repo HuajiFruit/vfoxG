@@ -1,11 +1,11 @@
 export namespace main {
-
+	
 	export class DownloadPathInfo {
 	    path: string;
 	    defaultPath: string;
 	    isDefault: boolean;
 	    hasMigratableData: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DownloadPathInfo(source);
 	    }
@@ -124,11 +124,11 @@ export namespace main {
 	    installedVfoxSdks: number;
 	    skippedVfoxSdks: number;
 	    warnings: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SdkEnvironmentImportResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -188,6 +188,7 @@ export namespace main {
 		    return a;
 		}
 	}
-
+	
 
 }
+

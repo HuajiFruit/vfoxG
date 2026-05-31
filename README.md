@@ -18,7 +18,8 @@
 
 ## Screenshots
 
-![vfoxG Screenshot](build/screenshot.png)
+![alt text](image.png)
+
 
 ## Downloads
 
