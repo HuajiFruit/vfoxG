@@ -150,6 +150,36 @@ func TestParseCurrentSdkVersion(t *testing.T) {
 	}
 }
 
+func TestParseSearchVersionsOutput(t *testing.T) {
+	out := `Available versions:
+ - 26.2.0 [npm 11.13.0]
+ - 24.16.0 (LTS) [npm 11.13.0]
+ - 24.16.0 (LTS) [npm 11.13.0]
+ - 3.45.0-0.1.pre (beta) [dart 3.13.0]
+Use 'vfox install nodejs@<version>'`
+
+	got := parseSearchVersionsOutput(out)
+	want := []string{"26.2.0", "24.16.0", "3.45.0-0.1.pre"}
+	if len(got) != len(want) {
+		t.Fatalf("parseSearchVersionsOutput() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseSearchVersionsOutput()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestIsPluginNotInstalledSearchError(t *testing.T) {
+	message := "command failed: exit status 1, output: nodejs not supported, error: Plugin nodejs is not installed. Use the -y flag"
+	if !isPluginNotInstalledSearchError(message) {
+		t.Fatal("expected plugin-not-installed search error to be detected")
+	}
+	if isPluginNotInstalledSearchError("command failed: output: get plugin index error: EOF") {
+		t.Fatal("network errors should not be classified as plugin-not-installed")
+	}
+}
+
 func TestParseSdkDetailOutputUsesSingleCurrentVersion(t *testing.T) {
 	out := `-> 3.14.4 <-- current
 -> 3.13.12 <-- current`

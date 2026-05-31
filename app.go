@@ -2538,7 +2538,7 @@ func (a *App) GetVersionPath(name, version string) (string, error) {
 	return a.getVersionPathUnlocked(name, version)
 }
 
-// SearchVersions 搜索 SDK 的可用版本，网络错误时返回空列表
+// SearchVersions 搜索 SDK 的可用版本
 func (a *App) SearchVersions(name string) ([]string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -2546,12 +2546,30 @@ func (a *App) SearchVersions(name string) ([]string, error) {
 	}
 	out, err := a.RunVfoxCommand("search", name)
 	if err != nil {
-		// search 可能因网络超时失败，返回空列表而非报错
-		return []string{}, nil
+		if isPluginNotInstalledSearchError(err.Error()) {
+			if _, addErr := a.RunVfoxCommand("add", name); addErr != nil {
+				return []string{}, fmt.Errorf("plugin %s is not installed and auto-add failed: %w", name, addErr)
+			}
+			out, err = a.RunVfoxCommand("search", name)
+		}
+		if err != nil {
+			return []string{}, err
+		}
 	}
 
+	return parseSearchVersionsOutput(out), nil
+}
+
+func isPluginNotInstalledSearchError(message string) bool {
+	lower := strings.ToLower(message)
+	return strings.Contains(lower, "plugin") &&
+		strings.Contains(lower, "not installed")
+}
+
+func parseSearchVersionsOutput(out string) []string {
 	lines := strings.Split(out, "\n")
 	var versions []string
+	seen := make(map[string]bool)
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -2569,30 +2587,36 @@ func (a *App) SearchVersions(name string) ([]string, error) {
 			continue
 		}
 
-		// 找到第一个包含字母或数字的字段作为版本号
+		// 找到第一个像版本号的字段。vfox 输出通常是 "- 1.2.3 (installed)"。
 		parts := strings.Fields(line)
 		var ver string
 		for _, p := range parts {
-			hasAlphaNum := false
+			p = strings.TrimSpace(p)
+			p = strings.Trim(p, ",;")
+			if p == "" || p == "-" || p == "*" || p == "•" {
+				continue
+			}
+			hasDigit := false
 			for _, r := range p {
-				if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-					hasAlphaNum = true
+				if r >= '0' && r <= '9' {
+					hasDigit = true
 					break
 				}
 			}
-			if hasAlphaNum {
+			if hasDigit {
 				ver = p
 				break
 			}
 		}
 
-		if ver != "" && ver != "Error:" && ver != "Available" {
+		if ver != "" && ver != "Error:" && ver != "Available" && !seen[ver] {
 			// 避免提取到一些表头词汇，如果在前置过滤里没过滤掉的话
 			versions = append(versions, ver)
+			seen[ver] = true
 		}
 	}
 
-	return versions, nil
+	return versions
 }
 
 // --- 系统 SDK 扫描（并行 + 缓存） ---
