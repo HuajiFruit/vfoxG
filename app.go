@@ -373,12 +373,12 @@ func (a *App) runVfoxWithProgress(args []string) error {
 		outputMu.Lock()
 		detail := strings.TrimSpace(lastOutput)
 		if releaseStatusOutput != "" {
-			detail = strings.TrimSpace(releaseStatusOutput)
+			detail = versionNotReleasedErrorMessage
 		}
 		outputMu.Unlock()
 		if detail == "" {
 			detail = err.Error()
-		} else {
+		} else if detail != versionNotReleasedErrorMessage {
 			detail = fmt.Sprintf("%s (%v)", detail, err)
 		}
 		a.emitEvent("vfox-log", "[EXIT ERROR] "+detail)
@@ -389,9 +389,11 @@ func (a *App) runVfoxWithProgress(args []string) error {
 	return nil
 }
 
+const versionNotReleasedErrorMessage = "version is not released"
+
 func isVersionNotReleasedOutput(line string) bool {
 	lower := strings.ToLower(line)
-	return strings.Contains(lower, "version is not released")
+	return strings.Contains(lower, versionNotReleasedErrorMessage)
 }
 
 func (a *App) tryStartVfoxTask() (func(), error) {

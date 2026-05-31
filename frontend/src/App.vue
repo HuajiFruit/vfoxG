@@ -78,6 +78,19 @@ const getErrorMessage = (err: unknown, fallback: string) => {
   if (typeof err === 'string' && err.trim()) return err;
   return fallback;
 };
+const isVersionNotReleasedMessage = (message: string) => {
+  const text = message.toLowerCase();
+  return text.includes('version is not released') ||
+    message.includes('版本未发布') ||
+    message.includes('无发布版本');
+};
+const formatDisplayError = (message: string) => {
+  const clean = message.trim();
+  if (isVersionNotReleasedMessage(clean)) {
+    return t('sdk.version_not_released');
+  }
+  return clean || t('toast.task_failed');
+};
 let busyHintTimer: ReturnType<typeof setTimeout> | null = null;
 
 const showBusyHint = () => {
@@ -102,7 +115,7 @@ const runTerminalTask = async (title: string, task: () => Promise<void>) => {
     completeRunningTaskSuccess();
     return true;
   } catch (err) {
-    completeRunningTaskError(getErrorMessage(err, t('toast.task_failed')));
+    completeRunningTaskError(formatDisplayError(getErrorMessage(err, t('toast.task_failed'))));
     throw err;
   } finally {
     terminalTaskRunning.value = false;
@@ -346,7 +359,7 @@ const completeRunningTaskError = (message: string) => {
   if (taskStatus.value !== 'running') return;
   taskHadError.value = true;
   taskStatus.value = 'error';
-  lastLogLine.value = message || t('toast.task_failed');
+  lastLogLine.value = formatDisplayError(message || t('toast.task_failed'));
   scheduleToastClose(5000);
 };
 
@@ -362,7 +375,9 @@ const handleNotify = (payload: NotifyPayload) => {
         ? t('common.success')
         : t('common.notification')
   );
-  lastLogLine.value = notification.message;
+  lastLogLine.value = notification.type === 'error'
+    ? formatDisplayError(notification.message)
+    : notification.message;
   taskStatus.value = notification.type;
   taskProgress.value = notification.type === 'success' ? 100 : 0;
   hasTaskProgress.value = notification.type === 'success';
@@ -374,9 +389,12 @@ const handleNotify = (payload: NotifyPayload) => {
   scheduleToastClose(notification.durationMs ?? (notification.type === 'error' ? 5000 : 3200));
 };
 
-const formatTaskError = (log: string) => log
-  .replace(/^\[(?:EXIT ERROR|STDOUT READ ERROR|STDERR READ ERROR|TIMEOUT|APP ERROR)\]\s*/, '')
-  .trim() || t('toast.task_failed');
+const formatTaskError = (log: string) => {
+  const message = log
+    .replace(/^\[(?:EXIT ERROR|STDOUT READ ERROR|STDERR READ ERROR|TIMEOUT|APP ERROR)\]\s*/, '')
+    .trim();
+  return formatDisplayError(message);
+};
 
 const closeToast = () => {
   showTaskToast.value = false;
@@ -428,7 +446,11 @@ onMounted(() => {
     showTaskToast.value = true;
 
     // Determine status
-    if (isTaskDoneLog(log)) {
+    if (isVersionNotReleasedMessage(log)) {
+      taskHadError.value = true;
+      taskStatus.value = 'error';
+      lastLogLine.value = t('sdk.version_not_released');
+    } else if (isTaskDoneLog(log)) {
       if (taskHadError.value) {
         scheduleToastClose(5000);
         return;
