@@ -170,6 +170,41 @@ function Remove-VfoxHomeDataIfExists([string]$VfoxHomePath) {
     Remove-DirectoryIfEmpty $vfoxHomeRoot
 }
 
+function Remove-AppConfigResidue([string]$ConfigRootPath, [string]$ConfigFilePath) {
+    Remove-FileIfExists $ConfigFilePath
+    Remove-DirectoryIfEmpty $ConfigRootPath
+}
+
+function Remove-VfoxHomeAppResidue([string]$VfoxHomePath) {
+    $vfoxHomeRoot = "$VfoxHomePath".Trim()
+    if ($vfoxHomeRoot -eq '') { return }
+
+    foreach ($name in @(
+        'path-shims',
+        'hijacked_paths.json',
+        'gui-plugins-cache.json',
+        'gui-system-sdks-cache.json',
+        'gui-non-vfox-sdks.json'
+    )) {
+        $path = Join-Path $vfoxHomeRoot $name
+        if (Test-Path -LiteralPath $path -PathType Container) {
+            Remove-DirectoryIfExists $path
+        } else {
+            Remove-FileIfExists $path
+        }
+    }
+
+    Remove-DirectoryIfEmpty $vfoxHomeRoot
+}
+
+function Remove-VfoxTempFiles {
+    $tempRoot = [System.IO.Path]::GetTempPath()
+    foreach ($pattern in @('vfox_hijack_*.done', 'vfox_restore_*.done', 'vfox_migrate_path_*.done', 'vfox_elevated_*.ps1')) {
+        Get-ChildItem -LiteralPath $tempRoot -Filter $pattern -File -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $appData = [Environment]::GetFolderPath('ApplicationData')
 $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
 $userProfile = [Environment]::GetFolderPath('UserProfile')
@@ -224,10 +259,11 @@ foreach ($hijackFile in @($hijackFiles)) {
 }
 
 foreach ($homePath in @($vfoxHome, $defaultVfoxHome, $legacyVfoxHome)) {
-    $shimPath = Join-Path $homePath 'path-shims'
-    Remove-DirectoryIfExists $shimPath
+    Remove-VfoxHomeAppResidue $homePath
 }
 
+Remove-AppConfigResidue $configRoot $configFile
+Remove-VfoxTempFiles
 Remove-DirectoryIfExists (Join-Path $appData $ProductExecutable)
 Remove-DirectoryIfExists (Join-Path $localAppData $ProductExecutable)
 Remove-DirectoryIfExists (Join-Path $localAppData $ProductName)
@@ -238,6 +274,10 @@ if ($RemoveSdkData) {
         Remove-VfoxHomeDataIfExists $configuredVfoxHome
     }
     Remove-VfoxHomeDataIfExists $legacyVfoxHome
+    Remove-DirectoryIfExists (Join-Path ([System.IO.Path]::GetTempPath()) 'vfoxG')
+} else {
+    Remove-DirectoryIfEmpty $vfoxRoot
+    Remove-DirectoryIfEmpty (Join-Path ([System.IO.Path]::GetTempPath()) 'vfoxG')
 }
 
 try {
