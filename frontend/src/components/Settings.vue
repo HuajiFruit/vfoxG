@@ -186,35 +186,6 @@ onMounted(() => {
 <template>
   <div class="settings-view view-container">
     <h2>{{ t('settings.title') }}</h2>
-
-    <Transition name="modal" appear>
-      <div v-if="pendingMigration" class="modal-overlay" role="dialog" aria-modal="true" @click="cancelPendingMigration">
-        <div class="modal-content migration-confirm-modal" @click.stop>
-          <div class="migration-confirm-heading">
-            <div class="migration-confirm-icon">
-              <span class="material-symbols-outlined">sync_alt</span>
-            </div>
-            <div>
-              <h2 class="modal-title">{{ t('settings.download.path.migrate_title') }}</h2>
-              <p class="modal-message">{{ t('settings.download.path.migrate_confirm') }}</p>
-            </div>
-          </div>
-          <div class="migration-confirm-path">
-            <span>{{ t('settings.download.path.migrate_target') }}</span>
-            <code>{{ pendingMigration.targetPath }}</code>
-          </div>
-          <div class="modal-actions">
-            <button class="btn tonal" :disabled="isDownloadPathBusy" @click="cancelPendingMigration">
-              {{ t('common.cancel') }}
-            </button>
-            <button class="btn primary" :disabled="isDownloadPathBusy" @click="confirmPendingMigration">
-              <div v-if="isDownloadPathBusy" class="spinner small-spinner"></div>
-              <template v-else>{{ t('common.confirm') }}</template>
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
     
     <div class="settings-section">
       <h3 class="section-heading">{{ t('settings.appearance') }}</h3>
@@ -342,6 +313,37 @@ onMounted(() => {
       </div>
     </div>
   </div>
+
+  <Teleport to="body">
+    <Transition name="modal" appear>
+      <div v-if="pendingMigration" class="modal-overlay migration-confirm-overlay" role="dialog" aria-modal="true" @click="cancelPendingMigration">
+        <div class="modal-content migration-confirm-modal" @click.stop>
+          <div class="migration-confirm-heading">
+            <div class="migration-confirm-icon">
+              <span class="material-symbols-outlined">sync_alt</span>
+            </div>
+            <div>
+              <h2 class="modal-title">{{ t('settings.download.path.migrate_title') }}</h2>
+              <p class="modal-message">{{ t('settings.download.path.migrate_confirm') }}</p>
+            </div>
+          </div>
+          <div class="migration-confirm-path">
+            <span>{{ t('settings.download.path.migrate_target') }}</span>
+            <code>{{ pendingMigration.targetPath }}</code>
+          </div>
+          <div class="modal-actions">
+            <button class="btn tonal" :disabled="isDownloadPathBusy" @click="cancelPendingMigration">
+              {{ t('common.cancel') }}
+            </button>
+            <button class="btn primary" :disabled="isDownloadPathBusy" @click="confirmPendingMigration">
+              <div v-if="isDownloadPathBusy" class="spinner small-spinner"></div>
+              <template v-else>{{ t('common.confirm') }}</template>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -354,7 +356,24 @@ onMounted(() => {
   margin-top: 24px;
 }
 
+.migration-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 10, 0.64);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-sizing: border-box;
+  z-index: 9999;
+}
+
 .migration-confirm-modal {
+  width: min(92vw, 540px);
   max-width: 540px;
 }
 
