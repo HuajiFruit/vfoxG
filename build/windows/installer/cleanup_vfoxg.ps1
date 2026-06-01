@@ -113,12 +113,12 @@ function Add-UniquePathRoot([System.Collections.Generic.List[string]]$Roots, [st
 }
 
 function Add-VfoxHomeRoots([System.Collections.Generic.List[string]]$Roots, [string]$VfoxHomePath) {
-    $home = "$VfoxHomePath".Trim()
-    if ($home -eq '') { return }
-    Add-UniquePathRoot $Roots $home
-    Add-UniquePathRoot $Roots (Join-Path $home 'cache')
-    Add-UniquePathRoot $Roots (Join-Path $home 'sdks')
-    Add-UniquePathRoot $Roots (Join-Path $home 'path-shims')
+    $vfoxHomeRoot = "$VfoxHomePath".Trim()
+    if ($vfoxHomeRoot -eq '') { return }
+    Add-UniquePathRoot $Roots $vfoxHomeRoot
+    Add-UniquePathRoot $Roots (Join-Path $vfoxHomeRoot 'cache')
+    Add-UniquePathRoot $Roots (Join-Path $vfoxHomeRoot 'sdks')
+    Add-UniquePathRoot $Roots (Join-Path $vfoxHomeRoot 'path-shims')
 }
 
 function Read-ConfiguredVfoxHome([string]$ConfigFile) {
@@ -145,8 +145,8 @@ function Read-HijackData([string]$HijackDataFile) {
 }
 
 function Remove-VfoxHomeDataIfExists([string]$VfoxHomePath) {
-    $home = "$VfoxHomePath".Trim()
-    if ($home -eq '' -or -not (Test-Path -LiteralPath $home)) { return }
+    $vfoxHomeRoot = "$VfoxHomePath".Trim()
+    if ($vfoxHomeRoot -eq '' -or -not (Test-Path -LiteralPath $vfoxHomeRoot)) { return }
 
     foreach ($name in @(
         'cache',
@@ -159,7 +159,7 @@ function Remove-VfoxHomeDataIfExists([string]$VfoxHomePath) {
         'gui-system-sdks-cache.json',
         'gui-non-vfox-sdks.json'
     )) {
-        $path = Join-Path $home $name
+        $path = Join-Path $vfoxHomeRoot $name
         if (Test-Path -LiteralPath $path -PathType Container) {
             Remove-DirectoryIfExists $path
         } else {
@@ -167,7 +167,7 @@ function Remove-VfoxHomeDataIfExists([string]$VfoxHomePath) {
         }
     }
 
-    Remove-DirectoryIfEmpty $home
+    Remove-DirectoryIfEmpty $vfoxHomeRoot
 }
 
 $appData = [Environment]::GetFolderPath('ApplicationData')
@@ -223,8 +223,8 @@ foreach ($hijackFile in @($hijackFiles)) {
     }
 }
 
-foreach ($home in @($vfoxHome, $defaultVfoxHome, $legacyVfoxHome)) {
-    $shimPath = Join-Path $home 'path-shims'
+foreach ($homePath in @($vfoxHome, $defaultVfoxHome, $legacyVfoxHome)) {
+    $shimPath = Join-Path $homePath 'path-shims'
     Remove-DirectoryIfExists $shimPath
 }
 

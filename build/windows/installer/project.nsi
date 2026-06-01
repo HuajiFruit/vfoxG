@@ -176,7 +176,8 @@ Section "uninstall"
     StrCpy $0 ""
     StrCmp $UnRemoveSdkData 1 0 +2
         StrCpy $0 "-RemoveSdkData"
-    ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\cleanup_vfoxg.ps1" -InstallDir "$INSTDIR" -ProductName "${INFO_PRODUCTNAME}" -ProductExecutable "${PRODUCT_EXECUTABLE}" $0'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "$PLUGINSDIR\cleanup_vfoxg.ps1" -InstallDir "$INSTDIR" -ProductName "${INFO_PRODUCTNAME}" -ProductExecutable "${PRODUCT_EXECUTABLE}" $0'
+    Pop $1
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
