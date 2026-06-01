@@ -61,10 +61,6 @@ const runTask = async (title: string, task: () => Promise<void>) => {
 
 const isBusyError = (err: unknown) => getErrorMessage(err, '').toLowerCase().includes('another terminal task is already running');
 
-const isVersionNotReleasedError = (err: unknown) => {
-  return getErrorMessage(err, '').toLowerCase().includes('version is not released');
-};
-
 const notifyTaskError = (err: unknown, fallback: string) => {
   if (isBusyError(err)) {
     notifyInfo(t('toast.please_wait'));
@@ -292,10 +288,6 @@ const installVersion = async (pluginName: string, version: string) => {
       installedVersions.value.add(version);
     });
   } catch (err) {
-    if (isVersionNotReleasedError(err)) {
-      notifyError(t('sdk.version_not_released'));
-      return;
-    }
     notifyTaskError(err, t('market.install_error', { name: pluginName, version }));
   } finally {
     if (installingVersion.value === version) {

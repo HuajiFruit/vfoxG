@@ -296,10 +296,6 @@ const isSearchVersionInstalled = (name: string, version: string) => {
   return detailVersions.some(v => normalizeVersionKey(formatVersionTitle(name, v.version)) === target);
 };
 
-const isVersionNotReleasedError = (err: unknown) => {
-  return getErrorMessage(err, '').toLowerCase().includes('version is not released');
-};
-
 const safeSdkList = (value: main.SdkInfo[] | null | undefined) => Array.isArray(value) ? value : [];
 
 const mergeSdkLists = (vfox: main.SdkInfo[] | null | undefined, system: main.SdkInfo[] | null | undefined) => {
@@ -537,10 +533,6 @@ const handleInstall = async (name: string, version: string) => {
       versionPaths.value[name][version] = newPath;
     });
   } catch (err) {
-    if (isVersionNotReleasedError(err)) {
-      notifyError(t('sdk.version_not_released'));
-      return;
-    }
     notifyTaskError(err, t('sdk.install_error', { name, version }));
   }
 };
