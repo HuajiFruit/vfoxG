@@ -3,6 +3,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -52,6 +55,46 @@ func TestWindowsShimScriptUsesAllPlaceholders(t *testing.T) {
 	}
 	if strings.Contains(script, "%!") || strings.Contains(script, "(MISSING)") {
 		t.Fatalf("shim script has fmt placeholder leak:\n%s", script)
+	}
+}
+
+func TestReadWindowsPathOverrideAliases(t *testing.T) {
+	tmp := t.TempDir()
+	hijackFile := filepath.Join(tmp, "hijacked_paths.json")
+	data := `{
+		"python": {
+			"Version": 2,
+			"Aliases": ["python", "python3", "pip", "pip3"]
+		},
+		"java": {
+			"Version": 2,
+			"Aliases": [
+				{"value": ["java", "javac"], "Count": 2}
+			]
+		}
+	}`
+	if err := os.WriteFile(hijackFile, []byte(data), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		want []string
+	}{
+		{name: "python", want: []string{"python", "python3", "pip", "pip3"}},
+		{name: "java", want: []string{"java", "javac"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := readWindowsPathOverrideAliases(hijackFile, tt.name)
+			if !ok {
+				t.Fatal("expected aliases to be read")
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("aliases = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

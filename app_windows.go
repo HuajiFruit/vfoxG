@@ -301,24 +301,25 @@ type windowsPathOverrideEntry struct {
 	MachinePaths []string `json:"MachinePaths,omitempty"`
 }
 
+func (a *App) refreshActiveSdkPathOverride(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || !a.CheckPluginPathOverride(name) {
+		return nil
+	}
+	aliases, err := a.writeWindowsSDKShims(name)
+	if err != nil {
+		return err
+	}
+	return a.writeWindowsPathOverrideEntry(name, aliases)
+}
+
 func (a *App) refreshPathOverridesAfterVfoxHomeChange(oldHome string) error {
 	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
 	if strings.TrimSpace(hijackFile) == "" {
 		return nil
 	}
-	data, err := os.ReadFile(hijackFile)
+	entries, err := readWindowsPathOverrideEntries(hijackFile)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if strings.TrimSpace(string(data)) == "" {
-		return nil
-	}
-
-	var entries map[string]windowsPathOverrideEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
 		return err
 	}
 	if len(entries) == 0 {
@@ -353,6 +354,23 @@ func (a *App) refreshPathOverridesAfterVfoxHomeChange(oldHome string) error {
 		return err
 	}
 	return updateWindowsMigratedPathOverride(removeRoots, shimDir)
+}
+
+func (a *App) writeWindowsPathOverrideEntry(name string, aliases []string) error {
+	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
+	if strings.TrimSpace(hijackFile) == "" {
+		return fmt.Errorf("unable to resolve PATH override metadata file")
+	}
+	entries, err := readWindowsPathOverrideEntries(hijackFile)
+	if err != nil {
+		return err
+	}
+	entry := entries[name]
+	entry.Version = 2
+	entry.ShimDir = a.windowsPathShimDir()
+	entry.Aliases = windowsUniqueStrings(aliases)
+	entries[name] = entry
+	return a.writeJSONFile(hijackFile, entries)
 }
 
 func windowsMigratedPathOverrideRoots(oldHome string, shimDir string, entries map[string]windowsPathOverrideEntry) []string {
@@ -506,9 +524,10 @@ function Add-MachinePathEntry($target) {
 }
 
 Add-MachinePathEntry $shimDir
-$aliases = @()
 if ($aliasesJson) {
-    $aliases = @($aliasesJson | ConvertFrom-Json)
+    $aliases = $aliasesJson | ConvertFrom-Json
+} else {
+    $aliases = @()
 }
 
 $allData = New-Object PSObject
@@ -518,7 +537,7 @@ if (Test-Path $hijackFile) {
 $data = @{
     Version = 2
     ShimDir = $shimDir
-    Aliases = @($aliases)
+    Aliases = $aliases
 }
 $allData | Add-Member -MemberType NoteProperty -Name $name -Value $data -Force
 $allData | ConvertTo-Json -Depth 10 | Set-Content $hijackFile
@@ -546,13 +565,8 @@ func (a *App) RestoreSystemPath(name string) error {
 	}
 	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
 	aliases := windowsSDKShimAliases(name)
-	if data, err := os.ReadFile(hijackFile); err == nil {
-		var parsed map[string]struct {
-			Aliases []string `json:"Aliases"`
-		}
-		if json.Unmarshal(data, &parsed) == nil && len(parsed[name].Aliases) > 0 {
-			aliases = parsed[name].Aliases
-		}
+	if parsedAliases, ok := readWindowsPathOverrideAliases(hijackFile, name); ok {
+		aliases = parsedAliases
 	}
 	vfoxSdksDir := a.getVfoxHomePath("sdks")
 	shimDir := a.windowsPathShimDir()
@@ -684,13 +698,8 @@ func (a *App) detachPluginPathOverrideFiles(name string) error {
 
 	hijackFile := a.getVfoxHomePath("hijacked_paths.json")
 	aliases := windowsSDKShimAliases(name)
-	if data, err := os.ReadFile(hijackFile); err == nil {
-		var parsed map[string]struct {
-			Aliases []string `json:"Aliases"`
-		}
-		if json.Unmarshal(data, &parsed) == nil && len(parsed[name].Aliases) > 0 {
-			aliases = parsed[name].Aliases
-		}
+	if parsedAliases, ok := readWindowsPathOverrideAliases(hijackFile, name); ok {
+		aliases = parsedAliases
 	}
 
 	if err := a.removeWindowsSDKShims(name, aliases); err != nil {
@@ -749,6 +758,82 @@ func (a *App) CheckWin11CompatMode() bool {
 		}
 	}
 	return false
+}
+
+func readWindowsPathOverrideAliases(hijackFile string, name string) ([]string, bool) {
+	entries, err := readWindowsPathOverrideEntries(hijackFile)
+	if err != nil {
+		return nil, false
+	}
+	entry, ok := entries[name]
+	if !ok {
+		return nil, false
+	}
+	aliases := windowsUniqueStrings(entry.Aliases)
+	return aliases, len(aliases) > 0
+}
+
+func readWindowsPathOverrideEntries(hijackFile string) (map[string]windowsPathOverrideEntry, error) {
+	result := make(map[string]windowsPathOverrideEntry)
+	data, err := os.ReadFile(hijackFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return result, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	for name, entryData := range raw {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		var entry struct {
+			Version      int             `json:"Version,omitempty"`
+			ShimDir      string          `json:"ShimDir,omitempty"`
+			Aliases      json.RawMessage `json:"Aliases"`
+			UserPaths    []string        `json:"UserPaths,omitempty"`
+			MachinePaths []string        `json:"MachinePaths,omitempty"`
+		}
+		if err := json.Unmarshal(entryData, &entry); err != nil {
+			continue
+		}
+		result[name] = windowsPathOverrideEntry{
+			Version:      entry.Version,
+			ShimDir:      entry.ShimDir,
+			Aliases:      decodeWindowsPathOverrideAliases(entry.Aliases),
+			UserPaths:    entry.UserPaths,
+			MachinePaths: entry.MachinePaths,
+		}
+	}
+	return result, nil
+}
+
+func decodeWindowsPathOverrideAliases(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var aliases []string
+	if err := json.Unmarshal(raw, &aliases); err == nil {
+		return windowsUniqueStrings(aliases)
+	}
+
+	var legacyAliases []struct {
+		Value []string `json:"value"`
+	}
+	if err := json.Unmarshal(raw, &legacyAliases); err != nil {
+		return nil
+	}
+	for _, item := range legacyAliases {
+		aliases = append(aliases, item.Value...)
+	}
+	return windowsUniqueStrings(aliases)
 }
 
 func findExecutable(exe string, cleanEnv []string) string {

@@ -2178,6 +2178,9 @@ func (a *App) useVersionUnlocked(name, version string) (string, error) {
 		a.emitEvent("vfox-log", "[EXIT ERROR] "+err.Error())
 		return "", err
 	}
+	if err := a.refreshActiveSdkPathOverride(name); err != nil {
+		a.emitEvent("vfox-log", "[APP WARN] Failed to refresh SDK PATH override: "+err.Error())
+	}
 
 	a.emitEvent("vfox-log", "[DONE]")
 	a.emitEvent("sdk-list-changed")

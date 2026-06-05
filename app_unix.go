@@ -121,6 +121,18 @@ func (a *App) RestorePluginSystemPath(pluginName string) error {
 	return a.RestoreSystemPath(pluginName)
 }
 
+func (a *App) refreshActiveSdkPathOverride(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || !a.CheckPluginPathOverride(name) {
+		return nil
+	}
+	sdkPath := a.getVfoxHomePath("sdks", name)
+	if strings.TrimSpace(sdkPath) == "" {
+		return fmt.Errorf("%s: unable to resolve SDK PATH entry", name)
+	}
+	return unixWritePathBlock(unixSDKMarkerLabel(name), unixSDKPathEntries(sdkPath))
+}
+
 func (a *App) refreshPathOverridesAfterVfoxHomeChange(oldHome string) error {
 	names, err := unixManagedSDKPathOverrideNames()
 	if err != nil {
