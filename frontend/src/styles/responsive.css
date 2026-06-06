@@ -1,0 +1,153 @@
+﻿@media (max-width: 900px) {
+  .sidebar {
+    width: 88px;
+  }
+
+  .logo {
+    padding: 18px 10px 16px;
+  }
+
+  .logo img {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+    margin-bottom: 0;
+  }
+
+  .logo h2,
+  .nav-btn:not(.active) {
+    font-size: 0;
+  }
+
+  .nav-btn {
+    justify-content: center;
+    padding: 11px;
+  }
+
+  .nav-btn .material-symbols-outlined {
+    margin: 0;
+  }
+
+  .main-content {
+    padding: 24px;
+  }
+
+  .task-toast {
+    left: 112px;
+    right: 16px;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .sdk-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sdk-empty-panel {
+    min-height: 420px;
+    padding: 32px 22px;
+  }
+
+  .sdk-empty-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-title-area {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .detail-title-area > div {
+    width: 100%;
+  }
+
+  .detail-title-text h1 {
+    font-size: 26px;
+  }
+
+  .sdk-icon-huge {
+    width: 64px;
+    height: 64px;
+    border-radius: 16px;
+  }
+
+  .plugin-actions {
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .terminal-header {
+    padding: 0 12px 0 14px;
+  }
+
+  .terminal-body {
+    padding-inline: 12px;
+  }
+
+  .terminal-line {
+    grid-template-columns: 60px 12px minmax(0, 1fr);
+    gap: 6px;
+  }
+}
+
+@media (max-width: 640px) {
+  .task-toast {
+    left: 96px;
+    top: 16px;
+    right: 12px;
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .task-toast .toast-title,
+  .task-toast .toast-subtitle {
+    white-space: normal;
+  }
+
+  .detail-header {
+    padding: 18px;
+  }
+
+  .detail-body {
+    padding: 20px 18px;
+  }
+
+  .terminal-dock {
+    height: 200px;
+  }
+
+  .terminal-title {
+    gap: 6px;
+  }
+
+  .terminal-count {
+    min-width: 18px;
+  }
+}
+
+:root[data-theme="light"] body {
+  background:
+    linear-gradient(135deg, rgba(34, 157, 150, 0.08) 0%, transparent 34%),
+    linear-gradient(180deg, var(--md-surface), var(--md-surface-container-low));
+}
+
+:root[data-theme="light"] #layout {
+  background:
+    linear-gradient(rgba(45, 31, 82, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(45, 31, 82, 0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+:root[data-theme="light"] .sidebar,
+:root[data-theme="light"] .task-toast,
+:root[data-theme="light"] .modal-content {
+  box-shadow: 0 18px 42px rgba(32, 28, 45, 0.12);
+}
+
+:root[data-theme="light"] {
+  --panel-border: rgba(85, 63, 140, 0.16);
+  --panel-shadow: 0 18px 42px rgba(32, 28, 45, 0.12);
+  --panel-shadow-soft: 0 10px 24px rgba(32, 28, 45, 0.1);
+}

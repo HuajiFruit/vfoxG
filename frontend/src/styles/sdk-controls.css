@@ -1,0 +1,330 @@
+/* === Divider === */
+hr {
+  border: none;
+  border-top: 1px solid var(--md-outline-variant);
+  margin: 28px 0;
+}
+
+/* === Expandable Card Header === */
+.card-header.expandable {
+  cursor: pointer;
+  user-select: none;
+  border-bottom: none;
+}
+
+.card-header.expandable:hover {
+  background: rgba(184, 169, 224, 0.04);
+}
+
+.expand-icon {
+  font-size: 12px;
+  width: 16px;
+  text-align: center;
+  color: var(--md-on-surface-variant);
+  transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* === Source Badge === */
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--md-shape-extra-small);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  line-height: 1;
+}
+
+.source-badge.vfox {
+  background: rgba(184, 169, 224, 0.15);
+  color: var(--md-primary);
+}
+
+.source-badge.system {
+  background: rgba(197, 190, 212, 0.08);
+  color: var(--md-on-surface-variant);
+}
+
+.version-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  min-width: 80px;
+  font-size: 12px;
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container-highest);
+  padding: 0 10px;
+  border-radius: var(--md-shape-full);
+  line-height: 1;
+}
+
+/* === Current Version Badge === */
+.current-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  background: rgba(184, 169, 224, 0.08);
+  border-radius: var(--md-shape-small);
+  font-size: var(--md-typescale-label-large);
+  font-weight: 500;
+  color: var(--md-primary);
+}
+
+.current-badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--md-primary);
+}
+
+/* === Version Chip (with actions) === */
+.version-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  border-radius: var(--md-shape-small);
+  border: 1px solid var(--md-outline-variant);
+  transition: background 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.version-chip:hover {
+  background: rgba(184, 169, 224, 0.04);
+}
+
+.version-chip.current {
+  background: rgba(184, 169, 224, 0.08);
+  border-color: rgba(184, 169, 224, 0.3);
+}
+
+.version-chip-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.version-label {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  color: var(--md-on-surface);
+}
+
+.system-tag, .vfox-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--md-on-surface-variant);
+  background-color: var(--md-surface-container-high);
+  border: 1px solid var(--md-outline-variant);
+  padding: 3px 6px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.vfox-tag {
+  color: var(--md-primary);
+  background-color: var(--md-surface-container);
+  border: 1px solid var(--md-primary);
+  opacity: 0.8;
+}
+
+.current-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--md-on-primary-container);
+  background-color: var(--md-primary-container);
+  padding: 3px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.version-chip-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn.text.small {
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--md-typescale-label-medium);
+  line-height: 32px;
+}
+
+/* === Danger Text Button === */
+.btn.text.danger {
+  color: var(--md-error);
+}
+
+.btn.text.danger:hover {
+  background: rgba(232, 169, 166, 0.08);
+}
+
+.btn.text.danger:active {
+  background: rgba(232, 169, 166, 0.12);
+}
+
+/* === Install Section === */
+.install-section { border-top: 1px solid var(--md-outline-variant);
+  margin-top: 12px;
+}
+
+/* === Search Box === */
+.search-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.search-input {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--md-shape-small);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-highest);
+  color: var(--md-on-surface);
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-body-medium);
+  outline: none;
+  transition: border-color 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.search-input::placeholder {
+  color: var(--md-on-surface-variant);
+}
+
+.search-input:focus {
+  border-color: var(--md-primary);
+}
+
+.search-results {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.search-result-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--md-shape-extra-small);
+  background: transparent;
+  color: var(--md-on-surface);
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.search-result-item:hover {
+  background: rgba(184, 169, 224, 0.12);
+}
+
+.search-result-item:active {
+  background: rgba(184, 169, 224, 0.2);
+}
+
+/* Modal Styles */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal-content {
+  background-color: var(--md-surface);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--md-outline-variant);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--md-surface-container-high);
+}
+
+.detail-item {
+  margin-bottom: 16px;
+}
+.detail-item:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.detail-value {
+  font-size: 15px;
+  color: var(--md-on-surface);
+}
+
+.path-box {
+  background-color: var(--md-surface-container-highest);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.path-text {
+  font-family: 'Fira Code', monospace;
+  font-size: 13px;
+  color: var(--md-primary);
+  word-break: break-all;
+  user-select: all;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

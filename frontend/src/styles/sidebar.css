@@ -1,0 +1,92 @@
+/* === Navigation Rail (Sidebar) === */
+.sidebar {
+  width: 260px;
+  background: var(--md-surface-container-low);
+  border-right: 1px solid var(--md-outline-variant);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.logo {
+  padding: 24px 16px 20px;
+  text-align: center;
+  border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.logo img {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  margin-bottom: 12px;
+}
+
+.logo h2 {
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-title-large);
+  line-height: var(--md-typescale-title-large-line-height);
+  font-weight: 500;
+  color: var(--md-on-surface);
+  letter-spacing: 0;
+}
+
+nav {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 12px 0;
+  gap: 4px;
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  color: var(--md-on-surface-variant);
+  padding: 12px 16px;
+  text-align: left;
+  border-radius: var(--md-shape-full);
+  cursor: pointer;
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-label-large);
+  font-weight: 500;
+  line-height: var(--md-typescale-label-large-line-height);
+  letter-spacing: 0.1px;
+  transition: background-color 200ms cubic-bezier(0.2, 0, 0, 1),
+              color 200ms cubic-bezier(0.2, 0, 0, 1);
+  position: relative;
+}
+
+.nav-btn svg {
+  flex-shrink: 0;
+}
+
+.nav-btn:hover {
+  background: rgba(184, 169, 224, 0.08);
+  color: var(--md-on-surface);
+}
+
+.nav-btn:active {
+  background: rgba(184, 169, 224, 0.12);
+}
+
+.nav-btn.active {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  font-weight: 600;
+}
+
+/* === Material Symbols for Nav === */
+.nav-btn .material-symbols-outlined {
+  font-size: 24px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  transition: font-variation-settings 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.nav-btn.active .material-symbols-outlined {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}

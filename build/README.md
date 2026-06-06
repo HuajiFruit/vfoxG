@@ -1,35 +1,54 @@
-# Build Directory
+# Build Assets
 
-The build directory is used to house all the build files and assets for your application. 
+[中文](README.zh-CN.md)
 
-The structure is:
+This directory contains Wails build assets, platform manifests, and Windows installer scripts for vfoxG.
 
-* bin - Output directory
-* darwin - macOS specific files
-* windows - Windows specific files
+## Directory Layout
 
-## Mac
+```text
+build/
+  appicon.png                   Source icon used by Wails
+  screenshot.png                Optional screenshot asset
+  darwin/
+    Info.plist                  macOS production plist
+    Info.dev.plist              macOS development plist
+  windows/
+    icon.ico                    Windows application icon
+    info.json                   Windows version/resource metadata
+    wails.exe.manifest          Windows app manifest
+    installer/
+      project.nsi               Main Windows installer script
+      project_386.nsi           32-bit Windows installer script
+      cleanup_vfoxg.ps1         Uninstall cleanup helper
+      wails_tools.nsh           Wails/NSIS helper macros
+```
 
-The `darwin` directory holds files specific to Mac builds.
-These may be customised and used as part of the build. To return these files to the default state, simply delete them
-and
-build with `wails build`.
+## Windows Installer
 
-The directory contains the following files:
+The verified release workflow builds Windows installers. The amd64 installer is built by Wails with NSIS enabled:
 
-- `Info.plist` - the main plist file used for Mac builds. It is used when building using `wails build`.
-- `Info.dev.plist` - same as the main plist file but used when building using `wails dev`.
+```bash
+wails build -platform windows/amd64 -nsis -clean
+```
 
-## Windows
+The 386 installer is built by the release workflow with `project_386.nsi` and NSIS directly.
 
-The `windows` directory contains the manifest and rc files used when building with `wails build`.
-These may be customised for your application. To return these files to the default state, simply delete them and
-build with `wails build`.
+Installer cleanup behavior matters because vfoxG creates managed SDK entrypoints, Windows shims, and PATH override metadata. When changing installer files, verify a real install and uninstall flow.
 
-- `icon.ico` - The icon used for the application. This is used when building using `wails build`. If you wish to
-  use a different icon, simply replace this file with your own. If it is missing, a new `icon.ico` file
-  will be created using the `appicon.png` file in the build directory.
-- `installer/*` - The files used to create the Windows installer. These are used when building using `wails build`.
-- `info.json` - Application details used for Windows builds. The data here will be used by the Windows installer,
-  as well as the application itself (right click the exe -> properties -> details)
-- `wails.exe.manifest` - The main application manifest file.
+## Hidden Helper Windows
+
+Uninstall and cleanup helpers should not show a visible PowerShell window. If installer scripts launch PowerShell, use the existing hidden-window approach and confirm it with an installed build.
+
+## vfox Core
+
+Release builds download vfox core binaries into `core/` before packaging. The `core/` directory is intentionally outside this `build/` directory and is ignored by Git.
+
+Do not commit downloaded vfox binaries.
+
+## Safe Editing Rules
+
+- Keep Wails-generated default files unless a product behavior requires changes.
+- Document installer behavior changes in `docs/RELEASE.md` and `docs/RELEASE.zh-CN.md`.
+- Test both install and uninstall when touching `build/windows/installer/`.
+- Avoid changing app icons or manifests together with unrelated code behavior.

@@ -1,0 +1,327 @@
+/* === Section Headings === */
+.section-heading {
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-label-large);
+  font-weight: 600;
+  color: var(--md-on-surface-variant);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 16px;
+  padding-left: 16px;
+  border-left: 3px solid var(--md-outline-variant);
+  line-height: 20px;
+}
+
+.section-heading:first-of-type {
+  border-left-color: var(--md-primary);
+  color: var(--md-primary);
+  margin-top: 0;
+}
+
+
+.plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* === System SDK Card (read-only) === */
+.card-system {
+  box-shadow: var(--md-elevation-0);
+  border: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-low);
+}
+
+.card-system h3 {
+  color: var(--md-on-surface-variant);
+}
+
+.card-system .card-header {
+  cursor: default;
+  padding-right: 20px;
+}
+
+.card-system .version-label {
+  font-size: 13px;
+  color: var(--md-on-surface-variant);
+}
+/* === Main Content === */
+.main-shell {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--md-surface);
+}
+
+.main-content {
+  flex: 1;
+  min-height: 0;
+  padding: 32px 40px;
+  overflow-y: auto;
+  position: relative;
+}
+
+.main-content h2 {
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-headline-medium);
+  line-height: var(--md-typescale-headline-medium-line-height);
+  font-weight: 400;
+  color: var(--md-on-surface);
+  margin-bottom: 24px;
+}
+
+/* === Grid & Cards === */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.sdk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--md-surface-container);
+  border-radius: var(--md-shape-medium);
+  box-shadow: var(--md-elevation-1);
+  transition: box-shadow 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.card:hover {
+  box-shadow: var(--md-elevation-2);
+}
+
+.card-header {
+  padding: 16px 16px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  /* Reset button defaults */
+  background: transparent;
+  border: none;
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.card-header h3 {
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-title-medium);
+  line-height: var(--md-typescale-title-medium-line-height);
+  font-weight: 500;
+  color: var(--md-on-surface);
+}
+
+.card-body {
+  padding: 0 16px 16px;
+  flex: 1;
+}
+
+/* === MD3 Buttons === */
+
+/* Base Button Styles */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  height: 40px;
+  padding: 0 24px;
+  border-radius: var(--md-shape-full);
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-label-large);
+  font-weight: 500;
+  line-height: 40px;
+  letter-spacing: 0.1px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Primary / Filled Button (primary CTA) */
+.btn.primary, .btn.filled {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  box-shadow: var(--md-elevation-0);
+}
+
+.btn.primary:hover, .btn.filled:hover {
+  background: #C5B7EA;
+  box-shadow: var(--md-elevation-1);
+}
+
+.btn.primary:active, .btn.filled:active {
+  background: #D4C8F2;
+}
+
+/* Filled Tonal Button (secondary emphasis) */
+.btn.tonal {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+
+.btn.tonal:hover {
+  background: #524D5A;
+  box-shadow: var(--md-elevation-1);
+}
+
+.btn.tonal:active {
+  background: #5F5A67;
+}
+
+/* Outlined Button */
+.btn.outlined {
+  background: transparent;
+  color: var(--md-primary);
+  border: 1px solid var(--md-outline);
+  line-height: 38px;
+}
+
+.btn.outlined:hover {
+  background: rgba(184, 169, 224, 0.08);
+  border-color: var(--md-on-surface);
+}
+
+.btn.outlined:active {
+  background: rgba(184, 169, 224, 0.12);
+}
+
+.btn.outlined.danger {
+  color: var(--md-error);
+  border-color: var(--md-error);
+}
+
+.btn.outlined.danger:hover {
+  background: rgba(255, 180, 171, 0.08);
+}
+
+/* Text Button */
+.btn.text {
+  background: transparent;
+  color: var(--md-primary);
+  padding: 0 12px;
+}
+
+.btn.text:hover {
+  background: rgba(184, 169, 224, 0.08);
+}
+
+.btn.text:active {
+  background: rgba(184, 169, 224, 0.12);
+}
+
+/* Small Button (for tight layouts) */
+.btn.small {
+  height: 32px;
+  line-height: 32px;
+  min-width: 80px;
+  padding: 0 16px;
+  font-size: var(--md-typescale-label-medium);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn:disabled {
+  cursor: default;
+  opacity: 0.62;
+  box-shadow: none;
+}
+
+/* === MD3 Badge === */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--md-shape-small);
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-label-small);
+  font-weight: 500;
+  line-height: 24px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.badge.installed {
+  background: rgba(184, 169, 224, 0.12);
+  color: var(--md-primary);
+  border: 1px solid rgba(184, 169, 224, 0.3);
+}
+
+/* === MD3 Chip === */
+.chip {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  margin-bottom: 8px;
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-shape-small);
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-label-large);
+  font-weight: 400;
+  line-height: 32px;
+  letter-spacing: 0.1px;
+}
+
+/* === Link === */
+.link {
+  color: var(--md-primary);
+  text-decoration: none;
+  font-family: 'Roboto', sans-serif;
+  font-size: var(--md-typescale-body-medium);
+  font-weight: 500;
+  letter-spacing: 0.25px;
+  transition: color 200ms cubic-bezier(0.2, 0, 0, 1);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link:hover {
+  color: var(--md-inverse-primary);
+  text-decoration: underline;
+}
+
+/* === Empty State === */
+.empty-state {
+  color: var(--md-on-surface-variant);
+  font-size: var(--md-typescale-body-medium);
+  line-height: var(--md-typescale-body-medium-line-height);
+  letter-spacing: 0.25px;
+  padding: 12px 0;
+}
+
+/* === Spinner (MD3 Circular Progress Indicator) === */
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(184, 169, 224, 0.2);
+  border-radius: 50%;
+  border-top-color: var(--md-primary);
+  animation: spin 1s cubic-bezier(0.2, 0, 0.8, 1) infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* === Utility === */
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.flex-align-center { display: flex; align-items: center; }
+.flex-between { display: flex; align-items: center; justify-content: space-between; }
+.flex-gap-8 { gap: 8px; }
+.flex-gap-12 { gap: 12px; }

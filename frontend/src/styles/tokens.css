@@ -1,0 +1,133 @@
+﻿@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,400,0,0&display=swap');
+
+/* === MD3 Design Tokens (Dark Theme) === */
+:root {
+  /* Primary — 柔和紫色，不过亮 */
+  --md-primary: #B8A9E0;
+  --md-on-primary: #2D1F52;
+  --md-primary-container: #4A3A6E;
+  --md-on-primary-container: #E5DDF8;
+
+  /* Secondary */
+  --md-secondary: #C5BED4;
+  --md-on-secondary: #2F293D;
+  --md-secondary-container: #3E3A46;
+  --md-on-secondary-container: #D4CEDC;
+
+  /* Tertiary */
+  --md-tertiary: #E5B4C0;
+  --md-on-tertiary: #44232E;
+  --md-tertiary-container: #5C3843;
+  --md-on-tertiary-container: #FAD7E0;
+
+  /* Error */
+  --md-error: #E8A9A6;
+  --md-on-error: #56110E;
+  --md-error-container: #7C1916;
+  --md-on-error-container: #F5D7D5;
+
+  /* Surface — 比纯黑亮一点，降低与按钮的反差 */
+  --md-surface: #1B1B1F;
+  --md-on-surface: #DCDCE0;
+  --md-on-surface-variant: #C0BEC6;
+  --md-outline: #8F8C93;
+  --md-outline-variant: #47464D;
+
+  /* Surface Container hierarchy */
+  --md-surface-container-lowest: #161518;
+  --md-surface-container-low: #222226;
+  --md-surface-container: #26262A;
+  --md-surface-container-high: #303034;
+  --md-surface-container-highest: #3B3B3F;
+
+  /* Inverse */
+  --md-inverse-surface: #E6E1E5;
+  --md-inverse-on-surface: #1D1B20;
+  --md-inverse-primary: #553F8C;
+
+  /* Shape */
+  --md-shape-extra-small: 4px;
+  --md-shape-small: 8px;
+  --md-shape-medium: 12px;
+  --md-shape-large: 16px;
+  --md-shape-extra-large: 28px;
+  --md-shape-full: 9999px;
+
+  /* Elevation (shadow boxes for dark theme) */
+  --md-elevation-0: none;
+  --md-elevation-1: 0px 1px 2px rgba(0,0,0,0.3), 0px 1px 3px 1px rgba(0,0,0,0.15);
+  --md-elevation-2: 0px 1px 2px rgba(0,0,0,0.3), 0px 2px 6px 2px rgba(0,0,0,0.15);
+  --md-elevation-3: 0px 4px 8px 3px rgba(0,0,0,0.15), 0px 1px 3px rgba(0,0,0,0.3);
+  --md-elevation-4: 0px 6px 10px 4px rgba(0,0,0,0.15), 0px 2px 3px rgba(0,0,0,0.3);
+  --md-elevation-5: 0px 8px 12px 6px rgba(0,0,0,0.15), 0px 4px 4px rgba(0,0,0,0.3);
+
+  /* Typography */
+  --md-typescale-display-large: 57px;
+  --md-typescale-display-line-height: 64px;
+  --md-typescale-headline-large: 32px;
+  --md-typescale-headline-line-height: 40px;
+  --md-typescale-headline-medium: 28px;
+  --md-typescale-headline-medium-line-height: 36px;
+  --md-typescale-title-large: 22px;
+  --md-typescale-title-large-line-height: 28px;
+  --md-typescale-title-medium: 16px;
+  --md-typescale-title-medium-line-height: 24px;
+  --md-typescale-title-small: 14px;
+  --md-typescale-title-small-line-height: 20px;
+  --md-typescale-body-large: 16px;
+  --md-typescale-body-large-line-height: 24px;
+  --md-typescale-body-medium: 14px;
+  --md-typescale-body-medium-line-height: 20px;
+  --md-typescale-body-small: 12px;
+  --md-typescale-body-small-line-height: 16px;
+  --md-typescale-label-large: 14px;
+  --md-typescale-label-large-line-height: 20px;
+  --md-typescale-label-medium: 12px;
+  --md-typescale-label-medium-line-height: 16px;
+  --md-typescale-label-small: 11px;
+  --md-typescale-label-small-line-height: 16px;
+}
+/* === MD3 Design Tokens (Light Theme) === */
+:root[data-theme="light"] {
+  --md-primary: #553F8C;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #E5DDF8;
+  --md-on-primary-container: #1D0060;
+
+  --md-secondary: #605B71;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #E6E0F9;
+  --md-on-secondary-container: #1D192B;
+
+  --md-tertiary: #7D5260;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #FFD8E4;
+  --md-on-tertiary-container: #31111D;
+
+  --md-error: #BA1A1A;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #FFDAD6;
+  --md-on-error-container: #410002;
+
+  --md-surface: #FEFBFF;
+  --md-on-surface: #1B1B1F;
+  --md-on-surface-variant: #48454E;
+  --md-outline: #79747E;
+  --md-outline-variant: #C9C4D0;
+
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #F7F2FA;
+  --md-surface-container: #F3EDF7;
+  --md-surface-container-high: #ECE6F0;
+  --md-surface-container-highest: #E6E0E9;
+
+  --md-inverse-surface: #313033;
+  --md-inverse-on-surface: #F4F0F4;
+  --md-inverse-primary: #B8A9E0;
+
+  --md-elevation-1: 0px 1px 2px rgba(0,0,0,0.1), 0px 1px 3px 1px rgba(0,0,0,0.05);
+  --md-elevation-2: 0px 1px 2px rgba(0,0,0,0.1), 0px 2px 6px 2px rgba(0,0,0,0.05);
+  --md-elevation-3: 0px 4px 8px 3px rgba(0,0,0,0.05), 0px 1px 3px rgba(0,0,0,0.1);
+  --md-elevation-4: 0px 6px 10px 4px rgba(0,0,0,0.05), 0px 2px 3px rgba(0,0,0,0.1);
+  --md-elevation-5: 0px 8px 12px 6px rgba(0,0,0,0.05), 0px 4px 4px rgba(0,0,0,0.1);
+}
