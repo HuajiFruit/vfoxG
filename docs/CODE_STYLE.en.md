@@ -67,48 +67,24 @@ Forbidden:
 
 ## Current Structure
 
-The current backend split keeps all Go files in `package main`:
-
-```text
-app_lifecycle.go               App struct, startup, event helpers
-app_facade_*.go                Public Wails methods
-model_*.go                     Shared DTOs
-config_*.go                    App config, VFOX_HOME, download path
-vfox_*.go                      vfox executable, command, env, progress, task lock
-parse_*.go                     Pure vfox output parsers
-sdk_*.go                       SDK inventory, detail, install, use, custom SDK behavior
-plugin_*.go                    Plugin market, state, add/remove, cache
-system_*.go                    System SDK scan, version probing, cache
-path_*.go                      Shared path comparison and managed roots
-migration_*.go                 Download path migration, copy, progress, repair
-sync_*.go                      SDK environment export/import
-windows_*.go                   Windows PATH, shim, junction, elevation, override metadata
-unix_*.go                      Unix PATH, symlink, executable, override behavior
-```
-
-If a future phase splits packages, use this direction:
+The repository root keeps only `main.go` for Wails startup. Backend code lives under `internal/`:
 
 ```text
 internal/
-  appfacade/
-  config/
-  vfoxcli/
-  sdk/
-  plugin/
-  systemsdk/
-  pathenv/
-  migration/
-  sync/
-  platform/
+  app/                         Wails facade and stateful workflows
+  model/                       Shared DTOs used by Wails bindings
+  parser/                      Pure vfox output parsers
+  pathutil/                    Shared path comparison and PATH cleanup helpers
+  storage/                     Shared JSON file persistence helpers
 ```
 
-Do not split packages until tests and Wails bindings can absorb the change safely.
+Keep new backend code inside the smallest existing internal package that owns the behavior. Do not add new Go files to the repository root unless they are startup-only.
 
 ## Backend Rules
 
 ### App Facade
 
-`app_facade_*.go` files may only:
+`internal/app/app_facade_*.go` files may only:
 
 - Trim and validate input.
 - Acquire task locks.
@@ -144,7 +120,7 @@ Neither file should refresh SDK lists, write caches, or mutate PATH.
 
 ### Parsers
 
-Parser files must be pure:
+`internal/parser` files must be pure:
 
 - Input: string.
 - Output: struct, slice, or string.

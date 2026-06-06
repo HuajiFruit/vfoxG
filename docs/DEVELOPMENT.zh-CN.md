@@ -77,22 +77,23 @@ Go-only 变更在测试前对改动文件运行 `gofmt`。前端变更需要通�
 
 修改导出的 `App` 方法或 DTO 时：
 
-- 公开方法放在匹配的 `app_facade_*.go` 文件里。
-- 模型结构放在 `model_*.go`。
+- 公开方法放在匹配的 `internal/app/app_facade_*.go` 文件里。
+- 导出的 DTO 放在 `internal/model/`。
 - 必要时重新构建或运行应用，让 Wails 重新生成绑定。
 - 只有 API 面真正变化时，才提交生成绑定的变化。
 
 ## 后端开发流程
 
-后端保持 `package main`，但按职责拆分：
+后端现在拆在 `internal/` 下：
 
-1. 在对应的 `app_facade_*.go` 添加或修改公开方法。
-2. 把行为放进细粒度领域文件，例如 `sdk_use.go`、`plugin_remove.go`、`sync_import_apply.go`。
-3. `parse_*.go` 保持纯函数，并使用 table-driven tests 覆盖。
-4. 文件 IO 放在 config、storage、cache 或 platform 文件。
-5. Windows 行为放在 `windows_*.go`，Unix 行为放在 `unix_*.go`。
+1. `main.go` 只负责 Wails 启动和绑定入口。
+2. 公开 Wails 方法放在 `internal/app/app_facade_*.go`。
+3. 有状态业务流程放进细粒度 `internal/app/*` 文件，例如 `sdk_use.go`、`plugin_remove.go`、`sync_import_apply.go`。
+4. 导出的 DTO 放在 `internal/model/`。
+5. 纯 vfox 输出解析器放在 `internal/parser/`，并用 table-driven tests 覆盖。
+6. Windows 行为放在 `internal/app/windows_*.go`，Unix 行为放在 `internal/app/unix_*.go`。
 
-不要继续往 `app.go` 里塞业务逻辑。它应主要负责 App 状态和生命周期。
+不要把后端业务逻辑放回仓库根目录。不要继续往 `internal/app/app.go` 里塞新流程，它应主要负责 App 状态。
 
 ## 前端开发流程
 

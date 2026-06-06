@@ -19,7 +19,7 @@ import {
   UnuseVersion,
   UseCustomSdk,
   UseVersion,
-} from '../../wailsjs/go/main/App';
+} from '../../wailsjs/go/app/App';
 import { ClipboardSetText } from '../../wailsjs/runtime/runtime';
 
 export const fetchAllSdks = () => GetAllSdks();

@@ -1,4 +1,4 @@
-import type { SdkDetail, SdkInfo } from '../services/appModels';
+import type { SdkDetail, SdkInfo, SdkVersionDetail } from '../services/appModels';
 import { ref, type Ref } from 'vue';
 import { t } from '../i18n';
 import { fetchSdkDetail, fetchVersionPath } from '../services/sdkManagerService';
@@ -79,7 +79,7 @@ export const useSdkDetailData = (options: UseSdkDetailDataOptions) => {
     if (!sdkDetail) return;
 
     sdkDetail.current = '';
-    (sdkDetail.versions || []).forEach(version => {
+    (sdkDetail.versions || []).forEach((version: SdkVersionDetail) => {
       version.isCurrent = false;
     });
   };

@@ -1,10 +1,10 @@
-import type { main } from '../../wailsjs/go/models';
+import type { model } from '../../wailsjs/go/models';
 
-export type DownloadPathInfo = main.DownloadPathInfo;
-export type PlatformInfo = main.PlatformInfo;
-export type PluginInfo = main.PluginInfo;
-export type SdkDetail = main.SdkDetail;
-export type SdkEnvironmentImportResult = main.SdkEnvironmentImportResult;
-export type SdkInfo = main.SdkInfo;
-export type SdkVersion = main.SdkVersion;
-export type SdkVersionDetail = main.SdkVersionDetail;
+export type DownloadPathInfo = model.DownloadPathInfo;
+export type PlatformInfo = model.PlatformInfo;
+export type PluginInfo = model.PluginInfo;
+export type SdkDetail = model.SdkDetail;
+export type SdkEnvironmentImportResult = model.SdkEnvironmentImportResult;
+export type SdkInfo = model.SdkInfo;
+export type SdkVersion = model.SdkVersion;
+export type SdkVersionDetail = model.SdkVersionDetail;

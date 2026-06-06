@@ -68,121 +68,34 @@ views/components
 
 ## 优化后的目录结构
 
-目标结构分两阶段实现。
-
-### 阶段一：细拆文件，保持 package main
-
-先在根目录下按职责拆文件，所有 Go 文件仍然使用 `package main`，降低 Wails 绑定和构建风险。
+当前结构已经进入 `internal/` 分层，根目录只保留 `main.go` 作为 Wails 启动入口。后端新代码不得继续加到仓库根目录。
 
 ```text
 vfoxG/
-  main.go
-  app_lifecycle.go               App struct、NewApp、startup、emitEvent
-  app_facade_sdk.go              暴露给 Wails 的 SDK 方法薄封装
-  app_facade_plugin.go           暴露给 Wails 的插件方法薄封装
-  app_facade_settings.go         暴露给 Wails 的设置方法薄封装
-  app_facade_sync.go             暴露给 Wails 的导入导出/同步方法薄封装
-
-  model_sdk.go                   SdkInfo、SdkDetail、SdkVersion 等
-  model_plugin.go                PluginInfo
-  model_platform.go              PlatformInfo
-  model_migration.go             MigrationProgress
-  model_sync.go                  导入导出相关 DTO
-
-  config_file.go                 appConfigFile/readAppConfig/saveAppConfig
-  config_vfox_home.go            defaultVfoxHome/loadVfoxHomeSetting/set/get
-  config_download_path.go        Get/Set/ResetDownloadPath
-
-  vfox_command.go                runVfoxCommand、RunVfoxCommand
-  vfox_progress.go               RunVfoxWithProgress、输出事件
-  vfox_env.go                    getCleanedEnvForVfox、upsertEnv
-  vfox_executable.go             getCoreDir、getVfoxExecutable、core name
-  vfox_task_lock.go              tryStartVfoxTask、任务互斥
-
-  parse_installed.go             parseInstalledSdksOutput
-  parse_sdk_detail.go            parseSdkDetailOutput、parse detail line
-  parse_current.go               parseCurrentSdkVersion
-  parse_search.go                search 输出解析
-  parse_version.go               normalize/same SDK version
-
-  sdk_list.go                    GetInstalledSdks、GetAllSdks 聚合
-  sdk_detail.go                  GetSdkDetail、detail fallback
-  sdk_install.go                 InstallVersion
-  sdk_uninstall.go               UninstallVersion
-  sdk_use.go                     UseVersion、UnuseVersion
-  sdk_runtime_root.go            resolveVersionRuntimeRoot、sdkRootHasExecutable
-  sdk_custom_registry.go         Get/Add/RemoveNonVfoxSdk
-  sdk_custom_use.go              UseCustomSdk、GetActiveCustomSdk
-  sdk_custom_detect.go           DetectSdkPathVersion
-
-  plugin_market.go               GetAvailablePlugins、RefreshAvailablePlugins
-  plugin_state.go                GetAddedPlugins、applyIsAddedStatus
-  plugin_add.go                  插件添加流程
-  plugin_remove.go               RemovePluginWithOptions
-  plugin_description_cache.go    GUI plugin cache 文件读写
-
-  system_scan.go                 ScanSystemSdks
-  system_defs.go                 systemSDKDefs
-  system_find.go                 findExecutableCandidates
-  system_version.go              tryGetVersion、isUsableSystemVersion
-  system_cache.go                system SDK cache 读写
-
-  path_common.go                 cleanPathValue、isPathWithin、samePath
-  path_roots.go                  vfoxManagedPathRoots、isVfoxManagedPath
-  path_override_common.go        CheckAnyPathOverride、CheckPluginPathOverride facade
-
-  migration_detect.go            hasMigratableVfoxHomeData
-  migration_run.go               migrateVfoxHomeData
-  migration_copy.go              copyPath/copyDir/copyFile no overwrite
-  migration_progress.go          migration tracker/progress event
-  migration_repair.go            repairCurrentVfoxSdkLinks、repair path override
-
-  sync_export.go                 ExportCurrentEnvironmentSdks、collect export
-  sync_export_format.go          formatSdkEnvironmentExport
-  sync_import_parse.go           parseSdkEnvironmentImport
-  sync_import_apply.go           ImportSdkEnvironment
-
-  windows_process.go             hideWindow、createNoWindow
-  windows_elevated.go            runElevatedScriptHelper、temp done file
-  windows_path_user.go           Check/Add/RemoveVfoxInPath
-  windows_path_machine.go        Machine PATH add/remove/restore helpers
-  windows_env_broadcast.go       SendMessageTimeout 环境广播
-  windows_junction.go            ensureJunction、removeJunctionIfExists
-  windows_shim_aliases.go        windowsSDKShimAliases、safe shim name
-  windows_shim_script.go         windowsShimScript
-  windows_shim_store.go          write/remove Windows SDK shims
-  windows_override_metadata.go   hijacked_paths.json 读写兼容
-  windows_override_apply.go      HijackSystemPath、refreshActiveSdkPathOverride
-  windows_override_restore.go    RestoreSystemPath、detach override files
-  windows_platform_info.go       Windows PlatformInfo 补充
-
-  unix_profile.go                profile candidates/path
-  unix_path_block.go             managed PATH block 写入/删除
-  unix_override.go               Hijack/RestoreSystemPath for Unix
-  unix_symlink.go                ensureJunction symlink 实现
-  unix_executable.go             isExecutableFile
-
-  installer_cleanup.md           安装/卸载脚本维护说明，脚本仍放 build/windows/installer/
+  main.go                        Wails 启动和 app 绑定入口
+  internal/
+    app/                         Wails facade 和有状态后端流程
+    model/                       与生成前端绑定共享的 DTO
+    parser/                      vfox 命令输出纯解析器
+    pathutil/                    路径比较和 PATH 清洗 helper
+    storage/                     JSON 文件持久化 helper
+  frontend/                      Vue 3 前端
+  build/                         图标、manifest、安装脚本
+  docs/                          中英双语项目文档
 ```
 
-### 阶段二：拆 package
+后续如果继续拆包，优先从 `internal/app` 中拆出真正有独立边界的领域包，例如 `sdk`、`plugin`、`pathenv`、`migration`。拆包必须伴随测试和 Wails 绑定验证。
 
-阶段一稳定后，再按包拆到 `internal/`。不要一开始就拆 package，除非已经有完整测试覆盖。
+### 后端目录职责
 
-```text
-internal/
-  appfacade/                     Wails 暴露层，只做参数校验和调用 usecase
-  config/                        app config、VFOX_HOME、下载路径
-  vfoxcli/                       vfox 命令执行和输出解析
-  sdk/                           SDK 业务用例
-  plugin/                        插件业务用例
-  systemsdk/                     系统 SDK 扫描
-  pathenv/                       PATH、shim、override
-  migration/                     数据迁移
-  sync/                          环境导入导出
-  platform/                      OS 适配
-```
-
+| 目录 | 只负责 |
+| --- | --- |
+| `main.go` | Wails 启动、窗口生命周期、绑定 `internal/app.App`。 |
+| `internal/app/` | 有状态业务流程、Wails facade、配置读写、vfox 命令、平台适配、迁移、同步。 |
+| `internal/model/` | 导出的 DTO 和 Wails 生成绑定需要的模型。 |
+| `internal/parser/` | vfox 命令输出纯解析器，不读文件、不发事件、不调用 vfox。 |
+| `internal/pathutil/` | 路径比较、PATH 清洗等无应用状态的 helper。 |
+| `internal/storage/` | JSON 文件持久化等无应用状态的 helper。 |
 ## 后端原子文件拆分细则
 
 ### App facade

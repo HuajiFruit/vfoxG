@@ -14,7 +14,7 @@ import {
   ScanSystemSdks,
   SearchVersions,
   UseCustomSdk,
-} from '../../wailsjs/go/main/App';
+} from '../../wailsjs/go/app/App';
 import { BrowserOpenURL } from '../../wailsjs/runtime/runtime';
 
 export const fetchAvailablePlugins = () => GetAvailablePlugins();

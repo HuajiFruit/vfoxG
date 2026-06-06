@@ -77,22 +77,23 @@ Generated frontend bindings live under `frontend/wailsjs/`. They are generated f
 
 When changing exported `App` methods or DTOs:
 
-- Keep the public method in the matching `app_facade_*.go` file.
-- Keep model structs in `model_*.go`.
+- Keep the public method in the matching `internal/app/app_facade_*.go` file.
+- Keep exported DTOs in `internal/model/`.
 - Rebuild or run the app so Wails regenerates bindings if needed.
 - Commit generated binding updates only when the API surface actually changed.
 
 ## Backend Workflow
 
-The backend is split by responsibility while remaining in `package main`:
+The backend is split under `internal/`:
 
-1. Add or change the public method in an `app_facade_*.go` file.
-2. Put behavior in the focused domain file, such as `sdk_use.go`, `plugin_remove.go`, or `sync_import_apply.go`.
-3. Keep parsing in `parse_*.go` pure and covered by table-driven tests.
-4. Keep file I/O in config, storage, cache, or platform files.
-5. Keep Windows behavior in `windows_*.go` and Unix behavior in `unix_*.go`.
+1. Keep `main.go` as the Wails startup and binding entrypoint only.
+2. Add or change public Wails methods in `internal/app/app_facade_*.go`.
+3. Put stateful workflows in focused `internal/app/*` files, such as `sdk_use.go`, `plugin_remove.go`, or `sync_import_apply.go`.
+4. Keep exported DTOs in `internal/model/`.
+5. Keep pure vfox output parsing in `internal/parser/` with table-driven tests.
+6. Keep Windows behavior in `internal/app/windows_*.go` and Unix behavior in `internal/app/unix_*.go`.
 
-Do not expand `app.go` with new business logic. It should remain app state and lifecycle oriented.
+Do not put backend business logic in the repository root. Do not expand `internal/app/app.go` with new workflows; it should remain app state oriented.
 
 ## Frontend Workflow
 

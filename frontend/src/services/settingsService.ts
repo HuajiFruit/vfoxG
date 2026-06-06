@@ -5,7 +5,7 @@ import {
   SelectDownloadPath,
   SetDownloadPath,
   SetDownloadPathWithMigration,
-} from '../../wailsjs/go/main/App';
+} from '../../wailsjs/go/app/App';
 export type { DownloadPathInfo } from './appModels';
 
 export const fetchDownloadPathInfo = () => GetDownloadPathInfo();

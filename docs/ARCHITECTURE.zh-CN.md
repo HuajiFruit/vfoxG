@@ -11,9 +11,9 @@ Vue components
   -> composables
     -> frontend services
       -> Wails generated bindings
-        -> Go app facade
-          -> SDK/plugin/sync/config use cases
-            -> parser, storage, path, platform, vfox command helpers
+        -> internal/app Wails facade
+          -> SDK/plugin/sync/config workflows
+            -> internal/model, internal/parser, storage, path, platform, vfox command helpers
               -> vfox CLI core and operating system
 ```
 
@@ -31,21 +31,32 @@ Vue components
 
 ## 后端形态
 
-后端当前保持在 `package main` 中。这样可以保持 Wails 绑定生成简单，同时通过原子文件控制复杂度。
+仓库根目录现在只保留 Wails 启动入口 `main.go`。后端代码放在 `internal/`：
+
+```text
+internal/
+  app/                           Wails facade 和有状态后端流程
+  model/                         与生成前端绑定共享的 DTO
+  parser/                        vfox 命令输出纯解析器
+  pathutil/                      路径比较和 PATH 清洗 helper
+  storage/                       JSON 文件持久化 helper
+```
+
+`internal/app` 持有 `App` 类型，因为 Wails 会绑定这个类型上的导出方法。纯数据和纯解析器拆到独立包，避免应用包继续承载所有后端概念。
 
 ### Facade 文件
 
-`app_facade_*.go` 是前端调用的公开 API 面：
+`internal/app/app_facade_*.go` 是前端调用的公开 API 面：
 
 | 文件 | 公开区域 |
 | --- | --- |
-| `app_facade_sdk.go` | SDK 列表、详情、版本安装/使用/取消使用、自定义 SDK。 |
-| `app_facade_plugin.go` | 插件市场、已添加插件、插件移除。 |
-| `app_facade_path.go` | PATH 集成、override 检查、hijack/restore 操作。 |
-| `app_facade_settings.go` | 下载目录、迁移选择、平台信息。 |
-| `app_facade_sync.go` | SDK 环境导出、预览和导入。 |
-| `app_facade_system.go` | 系统 SDK 缓存和主动扫描。 |
-| `app_facade_vfox.go` | 原始 vfox 命令和带进度命令桥接。 |
+| `internal/app/app_facade_sdk.go` | SDK 列表、详情、版本安装/使用/取消使用、自定义 SDK。 |
+| `internal/app/app_facade_plugin.go` | 插件市场、已添加插件、插件移除。 |
+| `internal/app/app_facade_path.go` | PATH 集成、override 检查、hijack/restore 操作。 |
+| `internal/app/app_facade_settings.go` | 下载目录、迁移选择、平台信息。 |
+| `internal/app/app_facade_sync.go` | SDK 环境导出、预览和导入。 |
+| `internal/app/app_facade_system.go` | 系统 SDK 缓存和主动扫描。 |
+| `internal/app/app_facade_vfox.go` | 原始 vfox 命令和带进度命令桥接。 |
 
 facade 函数应保持很薄：校验输入、必要时获取任务锁、调用细粒度实现、发出必要事件。
 
@@ -53,18 +64,20 @@ facade 函数应保持很薄：校验输入、必要时获取任务锁、调用�
 
 | 模式 | 职责 |
 | --- | --- |
-| `model_*.go` | 与 Wails 绑定共享的 DTO 和模型结构。 |
-| `config_*.go` | App config、下载目录、VFOX_HOME、JSON 持久化。 |
-| `vfox_*.go` | vfox 可执行文件查找、命令执行、干净环境、进度输出、任务锁。 |
-| `parse_*.go` | 已安装 SDK、详情、当前版本、搜索输出、版本归一化等纯解析器。 |
-| `sdk_*.go` | SDK 清单、详情、安装、卸载、使用、运行根目录、自定义 SDK 注册/使用/检测。 |
-| `plugin_*.go` | 插件市场加载、已添加状态、插件添加/移除、描述缓存。 |
-| `system_*.go` | 系统 SDK 定义、扫描编排、版本探测、缓存。 |
-| `path_*.go` | 跨平台路径比较和托管根目录 helper。 |
-| `migration_*.go` | 下载目录迁移、非覆盖复制、进度、修复。 |
-| `sync_*.go` | SDK 环境导出/导入的收集、解析、格式化和应用。 |
-| `windows_*.go` | Windows PATH、shim、junction、提权 helper、override 元数据。 |
-| `unix_*.go` | Unix PATH profile block、symlink、可执行检查、override 行为。 |
+| `internal/model/*.go` | 与 Wails 绑定共享的 DTO 和模型结构。 |
+| `internal/parser/*.go` | 已安装 SDK、详情、当前版本、搜索输出、版本归一化等纯解析器。 |
+| `internal/app/config_*.go` | App config、下载目录、VFOX_HOME。 |
+| `internal/app/vfox_*.go` | vfox 可执行文件查找、命令执行、干净环境、进度输出、任务锁。 |
+| `internal/app/sdk_*.go` | SDK 清单、详情、安装、卸载、使用、运行根目录、自定义 SDK 注册/使用/检测。 |
+| `internal/app/plugin_*.go` | 插件市场加载、已添加状态、插件添加/移除、描述缓存。 |
+| `internal/app/system_*.go` | 系统 SDK 定义、扫描编排、版本探测、缓存。 |
+| `internal/app/path_*.go` | 应用专属托管路径根和 override helper。 |
+| `internal/app/migration_*.go` | 下载目录迁移、非覆盖复制、进度、修复。 |
+| `internal/app/sync_*.go` | SDK 环境导出/导入的收集、解析、格式化和应用。 |
+| `internal/app/windows_*.go` | Windows PATH、shim、junction、提权 helper、override 元数据。 |
+| `internal/app/unix_*.go` | Unix PATH profile block、symlink、可执行检查、override 行为。 |
+| `internal/pathutil/*.go` | 路径比较和 PATH 清洗 helper。 |
+| `internal/storage/*.go` | JSON 文件持久化 helper。 |
 
 ## 前端形态
 

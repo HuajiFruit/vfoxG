@@ -2,7 +2,7 @@ import {
   ExportCurrentEnvironmentSdks,
   ImportSdkEnvironmentFromTxt,
   PreviewCurrentEnvironmentSdks,
-} from '../../wailsjs/go/main/App';
+} from '../../wailsjs/go/app/App';
 
 export const previewCurrentEnvironmentSdks = () => PreviewCurrentEnvironmentSdks();
 

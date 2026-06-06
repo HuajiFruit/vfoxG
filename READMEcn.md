@@ -66,13 +66,12 @@ vfoxG 基于 Wails 构建。当前已验证的发布流水线会构建 Windows �
 | services / i18n / styles     |
 +--------------+---------------+
                |
-               | Wails generated bindings
+| Wails generated bindings
                v
 +--------------+---------------+
-| Backend: Go package main     |
-| app_facade_* thin API layer  |
-| sdk / plugin / sync / config |
-| parser / path / platform     |
+| Backend: internal/app        |
+| facade / sdk / plugin / sync |
+| config / path / platform     |
 +--------------+---------------+
                |
                | command execution
@@ -83,7 +82,7 @@ vfoxG 基于 Wails 构建。当前已验证的发布流水线会构建 Windows �
 +------------------------------+
 ```
 
-后端现在保持在 `package main` 内，但已经按原子职责拆分文件，避免影响 Wails 绑定稳定性。暴露给 Wails 的公开方法集中在 `app_facade_*.go`，业务逻辑拆到 `sdk_use.go`、`plugin_remove.go`、`migration_run.go`、`sync_import_apply.go` 等文件。
+仓库根目录现在只保留 Wails 启动入口 `main.go`。后端应用逻辑放在 `internal/app`，DTO 放在 `internal/model`，纯 vfox 输出解析器放在 `internal/parser`。暴露给 Wails 的公开方法集中在 `internal/app/app_facade_*.go`，业务流程拆到 `sdk_use.go`、`plugin_remove.go`、`migration_run.go`、`sync_import_apply.go` 等文件。
 
 前端遵循组件、组合式函数、服务的依赖方向：
 
@@ -154,20 +153,13 @@ wails build -platform windows/amd64 -nsis -clean
 
 ```text
 vfoxG/
-  app.go, app_lifecycle.go       App 状态和生命周期
-  app_facade_*.go                Wails API facade 方法
-  model_*.go                     与前端绑定共享的 DTO
-  config_*.go                    app config、VFOX_HOME、下载目录
-  vfox_*.go                      vfox 可执行文件、命令、环境、进度、任务锁
-  parse_*.go                     vfox 输出纯解析器
-  sdk_*.go                       SDK 列表、详情、安装、切换、自定义 SDK
-  plugin_*.go                    插件市场、状态、添加、移除、缓存
-  system_*.go                    系统 SDK 定义、扫描、缓存
-  path_*.go                      PATH 比较和托管根目录 helper
-  migration_*.go                 下载目录迁移和修复
-  sync_*.go                      SDK 环境导入导出
-  windows_*.go                   Windows PATH、shim、junction、提权逻辑
-  unix_*.go                      Unix PATH 和 symlink 逻辑
+  main.go                        Wails 启动和 app 绑定入口
+  internal/
+    app/                         Wails facade 和有状态后端流程
+    model/                       与生成前端绑定共享的 DTO
+    parser/                      vfox 命令输出纯解析器
+    pathutil/                    路径比较和 PATH 清洗 helper
+    storage/                     JSON 文件持久化 helper
   frontend/                      Vue 3 前端
   build/                         图标、manifest、安装脚本
   docs/                          中英双语项目文档

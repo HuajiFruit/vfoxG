@@ -11,9 +11,9 @@ Vue components
   -> composables
     -> frontend services
       -> Wails generated bindings
-        -> Go app facade
-          -> SDK/plugin/sync/config use cases
-            -> parser, storage, path, platform, vfox command helpers
+        -> internal/app Wails facade
+          -> SDK/plugin/sync/config workflows
+            -> internal/model, internal/parser, storage, path, platform, vfox command helpers
               -> vfox CLI core and operating system
 ```
 
@@ -31,21 +31,32 @@ Each layer has a narrow responsibility:
 
 ## Backend Shape
 
-The backend currently stays in `package main`. This keeps Wails binding generation simple while still allowing atomic files.
+The repository root keeps only the Wails startup entrypoint in `main.go`. Backend code lives under `internal/`:
+
+```text
+internal/
+  app/                           Wails facade and stateful backend workflows
+  model/                         DTOs shared with generated frontend bindings
+  parser/                        Pure vfox command-output parsers
+  pathutil/                      Shared path comparison and PATH cleanup helpers
+  storage/                       Shared JSON file persistence helpers
+```
+
+`internal/app` owns the `App` type because Wails binds exported methods on that type. Pure data and pure parsing are split out so the application package is not a dumping ground for every backend concern.
 
 ### Facade Files
 
-`app_facade_*.go` files are the public API surface used by the frontend:
+`internal/app/app_facade_*.go` files are the public API surface used by the frontend:
 
 | File | Public area |
 | --- | --- |
-| `app_facade_sdk.go` | SDK list, detail, version install/use/unuse, custom SDK operations. |
-| `app_facade_plugin.go` | Plugin marketplace, added plugins, plugin removal. |
-| `app_facade_path.go` | PATH integration, override checks, hijack/restore operations. |
-| `app_facade_settings.go` | Download path, migration choices, platform information. |
-| `app_facade_sync.go` | SDK environment export, preview, and import. |
-| `app_facade_system.go` | Cached and active system SDK scanning. |
-| `app_facade_vfox.go` | Raw vfox command and progress command bridge. |
+| `internal/app/app_facade_sdk.go` | SDK list, detail, version install/use/unuse, custom SDK operations. |
+| `internal/app/app_facade_plugin.go` | Plugin marketplace, added plugins, plugin removal. |
+| `internal/app/app_facade_path.go` | PATH integration, override checks, hijack/restore operations. |
+| `internal/app/app_facade_settings.go` | Download path, migration choices, platform information. |
+| `internal/app/app_facade_sync.go` | SDK environment export, preview, and import. |
+| `internal/app/app_facade_system.go` | Cached and active system SDK scanning. |
+| `internal/app/app_facade_vfox.go` | Raw vfox command and progress command bridge. |
 
 Facade functions should stay thin: validate input, acquire task locks when needed, call the focused implementation, and emit required events.
 
@@ -53,18 +64,20 @@ Facade functions should stay thin: validate input, acquire task locks when neede
 
 | Pattern | Responsibility |
 | --- | --- |
-| `model_*.go` | DTOs and model structs shared with Wails bindings. |
-| `config_*.go` | App config, download path, VFOX_HOME, JSON persistence. |
-| `vfox_*.go` | vfox executable lookup, command execution, clean environment, progress output, task lock. |
-| `parse_*.go` | Pure parsers for installed SDKs, details, current version, search output, and version normalization. |
-| `sdk_*.go` | SDK inventory, detail, install, uninstall, use, runtime root, and custom SDK registry/use/detect. |
-| `plugin_*.go` | Marketplace loading, added plugin state, plugin add/remove, description cache. |
-| `system_*.go` | System SDK definitions, scan orchestration, version probing, cache. |
-| `path_*.go` | Cross-platform path comparison and managed root helpers. |
-| `migration_*.go` | Download directory migration, no-overwrite copy, progress, repair. |
-| `sync_*.go` | SDK environment export/import collection, parsing, formatting, and apply logic. |
-| `windows_*.go` | Windows PATH, shims, junctions, elevation helpers, override metadata. |
-| `unix_*.go` | Unix PATH profile blocks, symlinks, executable checks, override behavior. |
+| `internal/model/*.go` | DTOs and model structs shared with Wails bindings. |
+| `internal/parser/*.go` | Pure parsers for installed SDKs, details, current version, search output, and version normalization. |
+| `internal/app/config_*.go` | App config, download path, VFOX_HOME. |
+| `internal/app/vfox_*.go` | vfox executable lookup, command execution, clean environment, progress output, task lock. |
+| `internal/app/sdk_*.go` | SDK inventory, detail, install, uninstall, use, runtime root, and custom SDK registry/use/detect. |
+| `internal/app/plugin_*.go` | Marketplace loading, added plugin state, plugin add/remove, description cache. |
+| `internal/app/system_*.go` | System SDK definitions, scan orchestration, version probing, cache. |
+| `internal/app/path_*.go` | App-specific managed path root and override helpers. |
+| `internal/app/migration_*.go` | Download directory migration, no-overwrite copy, progress, repair. |
+| `internal/app/sync_*.go` | SDK environment export/import collection, parsing, formatting, and apply logic. |
+| `internal/app/windows_*.go` | Windows PATH, shims, junctions, elevation helpers, override metadata. |
+| `internal/app/unix_*.go` | Unix PATH profile blocks, symlinks, executable checks, override behavior. |
+| `internal/pathutil/*.go` | Shared path comparison and PATH cleanup helpers. |
+| `internal/storage/*.go` | Shared JSON file persistence helpers. |
 
 ## Frontend Shape
 

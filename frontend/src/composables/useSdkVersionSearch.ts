@@ -1,4 +1,4 @@
-import type { SdkDetail } from '../services/appModels';
+import type { SdkDetail, SdkVersionDetail } from '../services/appModels';
 import { computed, ref, type Ref } from 'vue';
 import { t } from '../i18n';
 import { searchSdkVersions } from '../services/sdkManagerService';
@@ -26,7 +26,7 @@ export const useSdkVersionSearch = (options: UseSdkVersionSearchOptions) => {
     const targetVersion = normalizeVersionKey(formatVersionTitle(sdkName, version));
     if (!targetVersion) return false;
     const detailVersions = options.sdkDetails.value[sdkName]?.versions || [];
-    return detailVersions.some(detailVersion =>
+    return detailVersions.some((detailVersion: SdkVersionDetail) =>
       normalizeVersionKey(formatVersionTitle(sdkName, detailVersion.version)) === targetVersion);
   };
 

@@ -66,13 +66,12 @@ Other desktop platforms can be built after the matching vfox core binaries and p
 | services / i18n / styles     |
 +--------------+---------------+
                |
-               | Wails generated bindings
+| Wails generated bindings
                v
 +--------------+---------------+
-| Backend: Go package main     |
-| app_facade_* thin API layer  |
-| sdk / plugin / sync / config |
-| parser / path / platform     |
+| Backend: internal/app        |
+| facade / sdk / plugin / sync |
+| config / path / platform     |
 +--------------+---------------+
                |
                | command execution
@@ -83,7 +82,7 @@ Other desktop platforms can be built after the matching vfox core binaries and p
 +------------------------------+
 ```
 
-The backend is intentionally split into small atomic files while staying in `package main` to keep Wails bindings stable. Public Wails methods live in `app_facade_*.go`; domain logic lives in focused files such as `sdk_use.go`, `plugin_remove.go`, `migration_run.go`, and `sync_import_apply.go`.
+The repository root now only keeps the Wails entrypoint in `main.go`. Backend application logic lives under `internal/app`, DTOs live under `internal/model`, and pure vfox output parsing lives under `internal/parser`. Public Wails methods stay in `internal/app/app_facade_*.go`; domain workflows live in focused files such as `sdk_use.go`, `plugin_remove.go`, `migration_run.go`, and `sync_import_apply.go`.
 
 The frontend follows a component/composable/service direction:
 
@@ -154,20 +153,13 @@ wails build -platform windows/amd64 -nsis -clean
 
 ```text
 vfoxG/
-  app.go, app_lifecycle.go       App state and lifecycle
-  app_facade_*.go                Wails API facade methods
-  model_*.go                     DTOs shared with frontend bindings
-  config_*.go                    app config, VFOX_HOME, download path
-  vfox_*.go                      vfox executable, command, env, progress, task lock
-  parse_*.go                     pure parsers for vfox output
-  sdk_*.go                       SDK list/detail/install/use/custom SDK logic
-  plugin_*.go                    plugin marketplace, state, add/remove, cache
-  system_*.go                    system SDK definitions, scanning, cache
-  path_*.go                      shared PATH comparison and managed-root helpers
-  migration_*.go                 download directory migration and repair
-  sync_*.go                      SDK environment export/import
-  windows_*.go                   Windows-specific PATH, shim, junction, elevation logic
-  unix_*.go                      Unix-specific PATH and symlink logic
+  main.go                        Wails startup and app binding entrypoint
+  internal/
+    app/                         Wails facade and stateful backend workflows
+    model/                       DTOs shared with generated frontend bindings
+    parser/                      pure parsers for vfox command output
+    pathutil/                    shared path comparison and PATH cleanup helpers
+    storage/                     shared JSON file persistence helpers
   frontend/                      Vue 3 frontend
   build/                         icons, manifests, installer scripts
   docs/                          bilingual project documentation
